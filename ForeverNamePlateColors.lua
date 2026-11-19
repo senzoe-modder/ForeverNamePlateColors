@@ -493,7 +493,17 @@ end
 
 function FNC:UpdateConfigPanelUI()
     if not configFrame then return end
-    enableCB:SetChecked(ForeverNamePlateColorsDB.enabled)
+
+    local addonEnabled = ForeverNamePlateColorsDB and (ForeverNamePlateColorsDB.enabled ~= false)
+    enableCB:SetChecked(addonEnabled)
+
+    -- Global action buttons: grey out and disable when master addon is disabled
+    matchBtn:SetEnabled(addonEnabled)
+    matchBtn:SetAlpha(addonEnabled and 1.0 or 0.4)
+    enableAllBtn:SetEnabled(addonEnabled)
+    enableAllBtn:SetAlpha(addonEnabled and 1.0 or 0.4)
+    disableAllBtn:SetEnabled(addonEnabled)
+    disableAllBtn:SetAlpha(addonEnabled and 1.0 or 0.4)
 
     for _, card in ipairs(FNC.categoryCards) do
         local cfg = card.cfg
@@ -511,26 +521,49 @@ function FNC:UpdateConfigPanelUI()
             end
 
             -- Visual Grey-out logic
-            if not cat.enabled then
+            if not addonEnabled then
+                -- Addon is disabled: grey out entire card and disable all interactions
                 card:SetAlpha(0.4)
+                card.enabledCB:SetEnabled(false)
                 card.healthCB:SetEnabled(false)
                 card.nameCB:SetEnabled(false)
                 card.healthBtn:SetEnabled(false)
                 card.nameBtn:SetEnabled(false)
                 card.resetBtn:SetEnabled(false)
-                card.healthBtn:SetAlpha(0.4)
-                card.nameBtn:SetAlpha(0.4)
             else
+                -- Addon is enabled: card stays full opacity
                 card:SetAlpha(1.0)
-                card.healthCB:SetEnabled(true)
-                card.nameCB:SetEnabled(true)
-                card.resetBtn:SetEnabled(true)
+                card.enabledCB:SetEnabled(true)
+                card.enabledCB:SetAlpha(1.0)
 
-                card.healthBtn:SetEnabled(cat.healthEnabled)
-                card.healthBtn:SetAlpha(cat.healthEnabled and 1.0 or 0.4)
+                if not cat.enabled then
+                    -- Section is disabled: title and section enable button stay active;
+                    -- sub-controls (health, name, reset) are greyed out and disabled.
+                    card.healthCB:SetEnabled(false)
+                    card.healthCB:SetAlpha(0.4)
+                    card.nameCB:SetEnabled(false)
+                    card.nameCB:SetAlpha(0.4)
+                    card.healthBtn:SetEnabled(false)
+                    card.healthBtn:SetAlpha(0.4)
+                    card.nameBtn:SetEnabled(false)
+                    card.nameBtn:SetAlpha(0.4)
+                    card.resetBtn:SetEnabled(false)
+                    card.resetBtn:SetAlpha(0.4)
+                else
+                    -- Section is enabled: enable sub-controls
+                    card.healthCB:SetEnabled(true)
+                    card.healthCB:SetAlpha(1.0)
+                    card.nameCB:SetEnabled(true)
+                    card.nameCB:SetAlpha(1.0)
+                    card.resetBtn:SetEnabled(true)
+                    card.resetBtn:SetAlpha(1.0)
 
-                card.nameBtn:SetEnabled(cat.nameEnabled)
-                card.nameBtn:SetAlpha(cat.nameEnabled and 1.0 or 0.4)
+                    card.healthBtn:SetEnabled(cat.healthEnabled)
+                    card.healthBtn:SetAlpha(cat.healthEnabled and 1.0 or 0.4)
+
+                    card.nameBtn:SetEnabled(cat.nameEnabled)
+                    card.nameBtn:SetAlpha(cat.nameEnabled and 1.0 or 0.4)
+                end
             end
         end
     end
