@@ -28,3 +28,10 @@ This is a big one!
   * **Quests Section:** Groups Quest NPC's and Mobs in one
   * **Neutral Section:** Groups Quest NPC's and Mobs in one
   * Cleaner visual layout, per-category reset buttons, and smoother color customization.
+
+### Future Planned Development
+I don't know how much of this is possible, just listing ideas incase people read this lol
+  * **Advanced Quest NPC & Mobs Settings** - Allow users to assign colors to NPCs, Neutral mobs, and Hostile mobs
+  * **Nameplate View Distance Settings** - Easily change view distance for nameplates
+  * **Assign minimap colors for party members** - Assign a color to each party member and easily distiguish who is who on the minimap
+  * **Tagged Mob color** - Assign a color for mobs you or your party have tagged
