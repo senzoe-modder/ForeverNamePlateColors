@@ -2,7 +2,12 @@
 ## Title: ForeverNamePlateColors
 ## Notes: Categorized nameplate and health bar color customizer for Classic Era.
 ## Author: senzoe-modder
-## Version: 1.3.1
+## Version: 1.4.0
 ## SavedVariables: ForeverNamePlateColorsDB
 
+Config.lua
+Database.lua
+Resolvers.lua
+Nameplates.lua
+Options.lua
 ForeverNamePlateColors.lua
