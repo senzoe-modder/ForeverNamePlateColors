@@ -29,6 +29,12 @@ This is a big one!
   * **Neutral Section:** Groups Quest NPC's and Mobs in one
   * Cleaner visual layout, per-category reset buttons, and smoother color customization.
 
+# v1.4.1
+* **Error Visibility**
+  * Added `/fnc errors` and `/fnc clearerrors` to easily display and clear error log
+* **Added Rainbow Griadient to title**
+  * Added rainbow graident to the title (ForeverNamePlateColors) whenever it is displayed in chat (on load, toggle, errors)
+
 ### Future Planned Development
 I don't know how much of this is possible, just listing ideas incase people read this lol
   * **Advanced Quest NPC & Mobs Settings** - Allow users to assign colors to NPCs, Neutral mobs, and Hostile mobs
