@@ -1,4 +1,30 @@
-### Changelog v1.3.1
+# Changelog v1.4.0
+This is a big one!
 
-* **Cleaner Category Toggling:** Disabling a category now keeps its title and "Enabled" checkbox clearly visible and clickable, while only greying out its color controls and reset button.
-* **Smarter Master Addon Disable:** Turning off the add-on now visually greys out all buttons and category sections without resetting or losing any of your saved settings.
+### Added
+* **Quest NPC & Mobs**
+  * Highlights active enemy quest targets and friendly quest turn-in NPCs in bright quest gold/yellow so important quest units stand out immediately.
+  * Automatically falls back to Blizzard's standard grey color when an enemy quest mob is tagged by another player.
+  * Relies on Questie addon
+* **Friendly Minions / Pets**
+  * **Personal Minions / Pets:** Custom colors for your own summoned pets and demons.
+  * **Party Minions / Pets:** Separate colors for pets belonging to members of your party or raid subgroup.
+  * **Raid Minions / Pets:** Distinct colors for pets belonging to players in other raid subgroups.
+  * **Owner Tags:** Option to display the owner's name beneath friendly pet nameplates.
+* **Neutral Mobs**
+  * Custom settings for Neutral Mob colors
+* **Friendly NPCs & Hostile Minions**
+  * Custom health bar and name colors for friendly/neutral NPCs and hostile player pets/minions.
+  * **NPC Titles:** Restores NPC role subtitles (such as `<Innkeeper>` or `<Flight Master>`) underneath unit names.
+* **Nameplate Visibility Controls**
+  * Dedicated toggles in the settings menu to show or hide nameplates for friendly NPCs, friendly pets/minions, and enemy pets/minions.
+* **Headline Mode (Name-Only Display)**
+  * Option to hide health bars and level text on non-combatant categories (such as friendly NPCs and quest givers) to keep a clean floating-text look while using custom colors.
+
+### Improved
+* **Reorganized Settings Page**
+  * **Friendly Section:** Groups Party, Raid, Faction Members, Friendly Minions, and NPCs into one dedicated section.
+  * **Hostile Section:** Groups Hostile Faction, Hostile Minions, and Enemy Mobs into a separate section.
+  * **Quests Section:** Groups Quest NPC's and Mobs in one
+  * **Neutral Section:** Groups Quest NPC's and Mobs in one
+  * Cleaner visual layout, per-category reset buttons, and smoother color customization.
