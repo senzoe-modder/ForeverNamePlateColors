@@ -1,221 +1,235 @@
 --------------------------------------------------------------------------------
 -- Config.lua
--- Category Definitions, UI Groupings, and Default Color Helpers
+-- Add-on Defaults, CVar Definitions, and Sectioned Category Registry
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
 
--- Category Definitions (single source of truth)
--- Evaluated sequentially from top to bottom; first matching category claims the unit.
+-- Smooth horizontal rainbow gradient across "ForeverNamePlateColors" for chat output
+local function BuildRainbowTitle(text)
+    local stops = {
+        { 1.00, 0.28, 0.28 }, -- Red
+        { 1.00, 0.62, 0.18 }, -- Orange
+        { 1.00, 0.90, 0.22 }, -- Yellow
+        { 0.30, 0.92, 0.45 }, -- Green
+        { 0.25, 0.85, 1.00 }, -- Cyan
+        { 0.55, 0.55, 1.00 }, -- Indigo
+        { 0.88, 0.45, 1.00 }, -- Violet
+    }
+    local len = #text
+    local numSegments = #stops - 1
+    local out = {}
+
+    for i = 1, len do
+        local t = (len > 1) and ((i - 1) / (len - 1)) or 0
+        local scaled = t * numSegments
+        local idx = math.min(math.floor(scaled) + 1, numSegments)
+        local localT = scaled - (idx - 1)
+
+        local c1, c2 = stops[idx], stops[idx + 1]
+        local r = math.floor((c1[1] + (c2[1] - c1[1]) * localT) * 255 + 0.5)
+        local g = math.floor((c1[2] + (c2[2] - c1[2]) * localT) * 255 + 0.5)
+        local b = math.floor((c1[3] + (c2[3] - c1[3]) * localT) * 255 + 0.5)
+
+        out[i] = string.format("|cFF%02X%02X%02X%s|r", r, g, b, text:sub(i, i))
+    end
+
+    return table.concat(out)
+end
+
+FNC.RAINBOW_TITLE = BuildRainbowTitle("ForeverNamePlateColors")
+
+-- Nameplate Visibility CVars (managed in Settings)
+FNC.VISIBILITY_CVARS = {
+    { cvar = "nameplateShowFriendlyNPCs",     label = "Friendly NPCs",     default = false },
+    { cvar = "nameplateShowFriendlyPets",     label = "Friendly Pets",     default = false },
+    { cvar = "nameplateShowFriendlyMinions",  label = "Friendly Minions",  default = false },
+    { cvar = "nameplateShowEnemyPets",        label = "Enemy Pets",        default = false },
+    { cvar = "nameplateShowEnemyMinions",     label = "Enemy Minions",     default = false },
+}
+
+FNC.CVAR_DEFAULTS = {
+    nameplateShowFriendlyNPCs    = false,
+    nameplateShowFriendlyPets    = false,
+    nameplateShowFriendlyMinions = false,
+    nameplateShowEnemyPets       = false,
+    nameplateShowEnemyMinions    = false,
+}
+
+-- Ordered Unit Categories (evaluated top-to-bottom; first match wins)
 FNC.CATEGORY_CONFIG = {
     {
+        section = "Friendly",
         key = "Party",
-        group = "Friendly",
         label = "Party (Subgroup)",
-        defaultHealth = { r = 0.6392, g = 0.6431, b = 1.0 },
-        defaultName   = { r = 1.0,    g = 1.0,    b = 1.0 },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return isSubgroup
+        hasHealthOption = true,
+        defaultHealth = { r = 0.639, g = 0.643, b = 1.0 },
+        defaultName   = { r = 0.639, g = 0.643, b = 1.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer)
+            return isUnitPlayer and isSubgroup
         end,
     },
     {
+        section = "Friendly",
         key = "Raid",
-        group = "Friendly",
         label = "Raid (Other Subgroups)",
-        defaultHealth = { r = 0.3961, g = 0.3686, b = 1.0 },
-        defaultName   = { r = 1.0,    g = 1.0,    b = 1.0 },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return (not isSubgroup) and isRaidMember
+        hasHealthOption = true,
+        defaultHealth = { r = 0.396, g = 0.369, b = 1.0 },
+        defaultName   = { r = 0.396, g = 0.369, b = 1.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer)
+            return isUnitPlayer and isRaidMember and not isSubgroup
         end,
     },
     {
-        key = "FriendlyPlayer",
-        group = "Friendly",
+        section = "Friendly",
+        key = "FactionMember",
         label = "Faction Member",
-        defaultHealth = { r = 0.3961, g = 0.3686, b = 1.0 },
-        defaultName   = { r = 1.0,    g = 1.0,    b = 1.0 },
+        hasHealthOption = true,
+        defaultHealth = { r = 0.396, g = 0.369, b = 1.0 },
+        defaultName   = { r = 0.396, g = 0.369, b = 1.0 },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return isUnitPlayer and (not isEnemy)
+            return isUnitPlayer and not isEnemy and not canAttack
         end,
     },
     {
+        section = "Friendly",
         key = "FriendlyMinion",
-        group = "Friendly",
         label = "Friendly Minion",
-        defaultEnabled  = false,
-        defaultHealth   = { r = 0.3961, g = 0.3686, b = 1.0 },
-        defaultName     = { r = 0.3961, g = 0.3686, b = 1.0 },
-        defaultSubtitle = { r = 0.3961, g = 0.3686, b = 1.0 },
-        defaultShowHealthBar = false,
-        syncHealthBarWithEnabled = true,
+        hasHealthOption = true,
         hasHealthBarOption = true,
-        hasSubtitleOption  = true,
-        subtitleLabel      = "Show Owner Tag",
-        subtitleButtonLabel = "Tag Color",
-        subtitleTooltip    = "Toggle displaying the minion's owner tag (e.g. <Player's Minion>) below their name.",
-        cvarSync = {
-            "nameplateShowFriendlyPlayerMinions",
-            "nameplateShowFriendlyPlayerPets",
-            "nameplateShowFriendlyPlayerGuardians",
-            "nameplateShowFriendlyPlayerTotems",
-            "nameplateShowFriendlyMinions",
-            "nameplateShowFriendlyPets",
-        },
-        enableParentCVars = {
-            "nameplateShowFriendlyPlayers",
-            "nameplateShowFriends",
-        },
+        defaultShowHealthBar = true,
+        hasSubtitleOption = true,
+        subtitleLabel = "Show Owner",
+        defaultShowSubtitle = false,
+        defaultHealth = { r = 0.45, g = 0.85, b = 0.45 },
+        defaultName   = { r = 0.45, g = 0.85, b = 0.45 },
+        defaultSubtitle = { r = 0.72, g = 0.92, b = 0.72 },
         subCategories = {
             {
                 key = "PersonalMinion",
-                label = "Personal Minion",
-                tooltip = "Override colors for your own summoned pets, demons, guardians, and totems.\nNote: Blizzard's default client only shows a nameplate for your own pet when targeted or enabled by client nameplate rules.",
-                defaultEnabled  = false,
-                defaultHealth   = { r = 1.0, g = 0.82, b = 0.0 },
-                defaultName     = { r = 1.0, g = 0.82, b = 0.0 },
-                defaultSubtitle = { r = 1.0, g = 0.82, b = 0.0 },
+                label = "Personal Minions / Pets",
+                defaultEnabled = false,
+                defaultHealth = { r = 0.25, g = 0.95, b = 0.85 },
+                defaultName   = { r = 0.25, g = 0.95, b = 0.85 },
+                defaultSubtitle = { r = 0.65, g = 0.98, b = 0.92 },
             },
             {
                 key = "PartyMinion",
-                label = "Party Minion (Subgroup)",
-                tooltip = "Override colors for pets, demons, guardians, and totems belonging to players in your 5-man party or same raid subgroup.",
-                defaultEnabled  = false,
-                defaultHealth   = { r = 0.6392, g = 0.6431, b = 1.0 },
-                defaultName     = { r = 0.6392, g = 0.6431, b = 1.0 },
-                defaultSubtitle = { r = 0.6392, g = 0.6431, b = 1.0 },
+                label = "Party Minions / Pets (Subgroup)",
+                defaultEnabled = false,
+                defaultHealth = { r = 0.639, g = 0.643, b = 1.0 },
+                defaultName   = { r = 0.639, g = 0.643, b = 1.0 },
+                defaultSubtitle = { r = 0.80, g = 0.82, b = 1.0 },
             },
             {
                 key = "RaidMinion",
-                label = "Raid Minion (Other Subgroups)",
-                tooltip = "Override colors for pets, demons, guardians, and totems belonging to raid members in other subgroups.",
-                defaultEnabled  = false,
-                defaultHealth   = { r = 0.3961, g = 0.3686, b = 1.0 },
-                defaultName     = { r = 0.3961, g = 0.3686, b = 1.0 },
-                defaultSubtitle = { r = 0.3961, g = 0.3686, b = 1.0 },
+                label = "Raid Minions / Pets (Other Subgroups)",
+                defaultEnabled = false,
+                defaultHealth = { r = 0.396, g = 0.369, b = 1.0 },
+                defaultName   = { r = 0.396, g = 0.369, b = 1.0 },
+                defaultSubtitle = { r = 0.70, g = 0.72, b = 1.0 },
             },
         },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return (not canAttack) and (not isUnitPlayer) and (UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)))
+            return (not isUnitPlayer) and (not isEnemy) and (not canAttack)
+                and (UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)))
         end,
     },
     {
-        key = "Hostile",
-        group = "Enemy",
+        section = "Friendly",
+        key = "NPC",
+        label = "NPC",
+        hasHealthOption = true,
+        hasHealthBarOption = true,
+        defaultShowHealthBar = false,
+        hasSubtitleOption = true,
+        subtitleLabel = "Show Title",
+        defaultShowSubtitle = false,
+        defaultHealth = { r = 0.2, g = 0.9, b = 0.2 },
+        defaultName   = { r = 0.2, g = 0.9, b = 0.2 },
+        defaultSubtitle = { r = 1.0, g = 0.82, b = 0.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
+            if isUnitPlayer or isEnemy or canAttack then return false end
+            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
+            if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
+                return false
+            end
+            return true
+        end,
+    },
+    {
+        section = "Neutral",
+        key = "NeutralMob",
+        label = "Neutral Mob",
+        hasHealthOption = true,
+        defaultHealth = { r = 1.0, g = 0.82, b = 0.0 },
+        defaultName   = { r = 1.0, g = 0.82, b = 0.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
+            if isUnitPlayer or isEnemy or not canAttack then return false end
+            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
+            if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
+                return false
+            end
+            return true
+        end,
+    },
+    {
+        section = "Hostile",
+        key = "HostileFaction",
         label = "Hostile Faction",
+        hasHealthOption = true,
         defaultHealth = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultName   = { r = 1.0, g = 1.0, b = 1.0 },
+        defaultName   = { r = 1.0, g = 0.0, b = 0.0 },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             return isUnitPlayer and (isEnemy or canAttack)
         end,
     },
     {
+        section = "Hostile",
         key = "HostileMinion",
-        group = "Enemy",
         label = "Hostile Minion",
-        defaultEnabled  = false,
-        defaultHealth   = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultName     = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultSubtitle = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultShowHealthBar = false,
-        syncHealthBarWithEnabled = true,
-        hasHealthBarOption = true,
-        hasSubtitleOption  = true,
-        subtitleLabel      = "Show Owner Tag",
-        subtitleButtonLabel = "Tag Color",
-        subtitleTooltip    = "Toggle displaying the enemy minion's owner tag (e.g. <Player's Minion>) below their name.",
-        cvarSync = {
-            "nameplateShowEnemyMinions",
-            "nameplateShowEnemyPets",
-            "nameplateShowEnemyGuardians",
-            "nameplateShowEnemyTotems",
-        },
-        enableParentCVars = {
-            "nameplateShowEnemies",
-        },
+        hasHealthOption = true,
+        hasSubtitleOption = true,
+        subtitleLabel = "Show Owner",
+        defaultShowSubtitle = false,
+        defaultHealth = { r = 1.0, g = 0.35, b = 0.1 },
+        defaultName   = { r = 1.0, g = 0.35, b = 0.1 },
+        defaultSubtitle = { r = 1.0, g = 0.65, b = 0.45 },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return (canAttack or isEnemy) and (not isUnitPlayer) and (UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)))
+            return (not isUnitPlayer) and (isEnemy or canAttack)
+                and (UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)))
         end,
     },
     {
-        key = "ActiveQuestUnit",
-        group = "Quests",
-        label = "Quest NPC / Mob",
-        defaultEnabled = true,
-        defaultHealth  = { r = 1.0, g = 0.82, b = 0.0 },
-        defaultName    = { r = 1.0, g = 0.82, b = 0.0 },
-        enabledTooltip = "Enable or disable color overrides for NPCs and mobs tied to your active quest log.\nEvaluated before generic Enemy Mob, Neutral Mob, and NPC rules.\nNote: Friendly Quest NPC nameplates require the NPC category (or Blizzard's Friendly NPC Nameplates) to be enabled.",
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
-            return (not isUnitPlayer) and FNC:IsActiveQuestUnit(unit, uf)
-        end,
-    },
-    {
-        key = "NPC",
-        group = "Friendly",
-        label = "NPC",
-        defaultEnabled  = false,
-        defaultHealth   = { r = 0.0, g = 1.0, b = 0.0 },
-        defaultName     = { r = 0.0, g = 1.0, b = 0.0 },
-        defaultSubtitle = { r = 0.0, g = 1.0, b = 0.0 },
-        defaultShowHealthBar = false, -- Headline Mode by default for clean floating text
-        hasHealthBarOption = true,
-        hasSubtitleOption  = true,
-        subtitleLabel      = "Show NPC Title",
-        subtitleButtonLabel = "Title Color",
-        subtitleTooltip    = "Toggle displaying the NPC's role or job title (e.g. <Innkeeper>, <Flight Master>) below their name.",
-        cvarSync = { "nameplateShowFriendlyNPCs" },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return (not canAttack) and (not isUnitPlayer)
-        end,
-    },
-    {
-        key = "Neutral",
-        group = "Neutral",
-        label = "Neutral Mob",
-        defaultEnabled = true,
-        defaultHealth  = { r = 1.0, g = 0.5, b = 0.0 },
-        defaultName    = { r = 1.0, g = 1.0, b = 1.0 },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return canAttack and (not isUnitPlayer) and (UnitReaction("player", unit) == 4)
-        end,
-    },
-    {
-        key = "Enemy",
-        group = "Enemy",
+        section = "Hostile",
+        key = "EnemyMob",
         label = "Enemy Mob",
+        hasHealthOption = true,
         defaultHealth = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultName   = { r = 1.0, g = 1.0, b = 1.0 },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
-            return canAttack and (not isUnitPlayer)
+        defaultName   = { r = 1.0, g = 0.0, b = 0.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
+            if isUnitPlayer or not (isEnemy or canAttack) then return false end
+            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
+            if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
+                return false
+            end
+            return true
+        end,
+    },
+    {
+        section = "Quests",
+        key = "ActiveQuestUnit",
+        label = "Quest NPC / Mob",
+        hasHealthOption = true,
+        defaultHealth = { r = 1.0, g = 0.85, b = 0.0 },
+        defaultName   = { r = 1.0, g = 0.85, b = 0.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
+            if isUnitPlayer then return false end
+            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            return FNC:IsActiveQuestUnit(unit, uf)
         end,
     },
 }
-
-FNC.UI_GROUPS = {
-    { key = "Friendly", label = "Friendly" },
-    { key = "Neutral",  label = "Neutral" },
-    { key = "Enemy",    label = "Enemy" },
-    { key = "Quests",   label = "Quests" },
-}
-
--- Migration mapping from legacy flat keys
-FNC.LEGACY_KEY_MAP = {
-    Party          = { health = "colorParty",          name = "colorPartyName" },
-    Raid           = { health = "colorRaid",           name = "colorRaidName" },
-    FriendlyPlayer = { health = "colorFriendlyPlayer", name = "colorFriendlyPlayerName" },
-    Hostile        = { health = "colorHostile",        name = "colorHostileName" },
-    Enemy          = { health = "colorEnemy",          name = "colorEnemyName" },
-    NPC            = { health = "colorNPC",            name = "colorNPCName" },
-}
-
-function FNC.GetDefaultHealth(cfg)
-    if cfg.defaultHealth then
-        return { r = cfg.defaultHealth.r, g = cfg.defaultHealth.g, b = cfg.defaultHealth.b }
-    end
-    local defaultNPCCol = (FACTION_BAR_COLORS and FACTION_BAR_COLORS[5]) or { r = 0.0, g = 1.0, b = 0.0 }
-    return { r = defaultNPCCol.r, g = defaultNPCCol.g, b = defaultNPCCol.b }
-end
-
-function FNC.GetDefaultSubtitle(cfg)
-    local sub = cfg.defaultSubtitle or { r = 1.0, g = 0.82, b = 0.0 }
-    return { r = sub.r, g = sub.g, b = sub.b }
-end
