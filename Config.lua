@@ -143,7 +143,7 @@ FNC.CATEGORY_CONFIG = {
         defaultEnabled = true,
         defaultHealth  = { r = 1.0, g = 0.82, b = 0.0 },
         defaultName    = { r = 1.0, g = 0.82, b = 0.0 },
-        enabledTooltip = "Enable or disable color overrides for NPCs and mobs tied to your active quest log.\nEvaluated before generic Enemy Mob and NPC rules.\nNote: Friendly Quest NPC nameplates require the NPC category (or Blizzard's Friendly NPC Nameplates) to be enabled.",
+        enabledTooltip = "Enable or disable color overrides for NPCs and mobs tied to your active quest log.\nEvaluated before generic Enemy Mob, Neutral Mob, and NPC rules.\nNote: Friendly Quest NPC nameplates require the NPC category (or Blizzard's Friendly NPC Nameplates) to be enabled.",
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
             return (not isUnitPlayer) and FNC:IsActiveQuestUnit(unit, uf)
         end,
@@ -168,6 +168,17 @@ FNC.CATEGORY_CONFIG = {
         end,
     },
     {
+        key = "Neutral",
+        group = "Neutral",
+        label = "Neutral Mob",
+        defaultEnabled = true,
+        defaultHealth  = { r = 1.0, g = 0.5, b = 0.0 },
+        defaultName    = { r = 1.0, g = 1.0, b = 1.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
+            return canAttack and (not isUnitPlayer) and (UnitReaction("player", unit) == 4)
+        end,
+    },
+    {
         key = "Enemy",
         group = "Enemy",
         label = "Enemy Mob",
@@ -181,6 +192,7 @@ FNC.CATEGORY_CONFIG = {
 
 FNC.UI_GROUPS = {
     { key = "Friendly", label = "Friendly" },
+    { key = "Neutral",  label = "Neutral" },
     { key = "Enemy",    label = "Enemy" },
     { key = "Quests",   label = "Quests" },
 }

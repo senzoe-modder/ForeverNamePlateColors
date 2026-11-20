@@ -373,7 +373,7 @@ local function CreateCategoryCard(parent, cfg)
         end)
     end
 
-    -- Row 2 (Optional Sub-Settings): Show Health Bar, Show Subtitle/Owner Tag
+    -- Row 2 (Optional Display Toggles): Show Health Bar, Show Subtitle/Owner Tag
     if cfg.hasHealthBarOption then
         local healthBarCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
         healthBarCB:SetPoint("TOPLEFT", 10, -28)
@@ -402,16 +402,6 @@ local function CreateCategoryCard(parent, cfg)
         SetTooltip(subtitleCB, cfg.subtitleTooltip or "Toggle displaying the unit's subtitle below their name.")
         card.subtitleCB = subtitleCB
 
-        local subtitleBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-        subtitleBtn:SetSize(100, 20)
-        subtitleBtn:SetPoint("LEFT", subtitleCB.Text, "RIGHT", 8, 0)
-        subtitleBtn:SetText(cfg.subtitleButtonLabel or "Subtitle Color")
-        local subtitleSwatch = subtitleBtn:CreateTexture(nil, "OVERLAY")
-        subtitleSwatch:SetSize(14, 14)
-        subtitleSwatch:SetPoint("RIGHT", subtitleBtn, "RIGHT", -6, 0)
-        subtitleBtn.swatch = subtitleSwatch
-        card.subtitleBtn = subtitleBtn
-
         subtitleCB:SetScript("OnClick", function(self)
             local cat = ForeverNamePlateColorsDB.categories[cfg.key]
             if cat then
@@ -420,13 +410,9 @@ local function CreateCategoryCard(parent, cfg)
                 FNC:RefreshAllPlates()
             end
         end)
-
-        subtitleBtn:SetScript("OnClick", function()
-            FNC:OpenColorPicker(cfg.key, "subtitle", subtitleSwatch)
-        end)
     end
 
-    -- Row 3 (Base Category Channels): Health Checkbox + Button, Name Checkbox + Button, Reset Button
+    -- Row 3 (Base Category Color Channels): Health Color, Name Color, Optional Tag/Title Color, Reset Button
     local baseRowY = (cfg.hasHealthBarOption or cfg.hasSubtitleOption) and -54 or -30
 
     local healthCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
@@ -443,7 +429,7 @@ local function CreateCategoryCard(parent, cfg)
     healthBtn.swatch = healthSwatch
 
     local nameCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
-    nameCB:SetPoint("LEFT", healthBtn, "RIGHT", 14, 0)
+    nameCB:SetPoint("LEFT", healthBtn, "RIGHT", 12, 0)
     SetTooltip(nameCB, "Toggle custom name text color for " .. cfg.label .. ".\nWhen unchecked, Blizzard default name color is used.")
 
     local nameBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
@@ -454,6 +440,23 @@ local function CreateCategoryCard(parent, cfg)
     nameSwatch:SetSize(14, 14)
     nameSwatch:SetPoint("RIGHT", nameBtn, "RIGHT", -6, 0)
     nameBtn.swatch = nameSwatch
+
+    if cfg.hasSubtitleOption then
+        local subtitleBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+        subtitleBtn:SetSize(105, 20)
+        subtitleBtn:SetPoint("LEFT", nameBtn, "RIGHT", 14, 0)
+        subtitleBtn:SetText(cfg.subtitleButtonLabel or "Subtitle Color")
+        SetTooltip(subtitleBtn, "Customize the color of " .. (cfg.subtitleLabel or "the subtitle") .. ".")
+        local subtitleSwatch = subtitleBtn:CreateTexture(nil, "OVERLAY")
+        subtitleSwatch:SetSize(14, 14)
+        subtitleSwatch:SetPoint("RIGHT", subtitleBtn, "RIGHT", -6, 0)
+        subtitleBtn.swatch = subtitleSwatch
+        card.subtitleBtn = subtitleBtn
+
+        subtitleBtn:SetScript("OnClick", function()
+            FNC:OpenColorPicker(cfg.key, "subtitle", subtitleSwatch)
+        end)
+    end
 
     local resetBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
     resetBtn:SetSize(65, 20)
@@ -595,8 +598,12 @@ for _, group in ipairs(FNC.UI_GROUPS) do
 end
 
 function FNC:RelayoutConfigPanel()
-    local cardY = -90
-    for _, group in ipairs(FNC.UI_GROUPS) do
+    local cardY = -96
+    for groupIdx, group in ipairs(FNC.UI_GROUPS) do
+        if groupIdx > 1 then
+            cardY = cardY - 22
+        end
+
         local header = FNC.headersByGroup[group.key]
         if header then
             header:ClearAllPoints()
@@ -628,8 +635,6 @@ function FNC:RelayoutConfigPanel()
                 end
             end
         end
-
-        cardY = cardY - 6
     end
     scrollChild:SetHeight(math.abs(cardY) + 20)
 end
