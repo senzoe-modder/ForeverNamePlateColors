@@ -2,7 +2,7 @@
 ## Title: ForeverNamePlateColors
 ## Notes: Customize nameplate health bar colors, name text colors, headline mode, and NPC titles for WoW Classic Era / Forever.
 ## Author: Valerius Tombkeeper
-## Version: 1.4.0
+## Version: 1.4.2
 ## OptionalDeps: Questie
 ## SavedVariables: ForeverNamePlateColorsDB
 ## IconTexture: Interface\AddOns\ForeverNamePlateColors\logo.tga

@@ -35,6 +35,13 @@ This is a big one!
 * **Added Rainbow Griadient to title**
   * Added rainbow graident to the title (ForeverNamePlateColors) whenever it is displayed in chat (on load, toggle, errors)
 
+***
+
+# v1.4.2
+Missed incrementing ForeverNamePlateColors.toc, and missed changelog updates
+
+***
+
 ### Future Planned Development
 I don't know how much of this is possible, just listing ideas incase people read this lol
   * **Advanced Quest NPC & Mobs Settings** - Allow users to assign colors to NPCs, Neutral mobs, and Hostile mobs
