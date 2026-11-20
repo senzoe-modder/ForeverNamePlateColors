@@ -1,9 +1,46 @@
 --------------------------------------------------------------------------------
 -- ForeverNamePlateColors.lua
--- Main Entry Point, Event Router, and Slash Commands
+-- Main Entry Point, Error Tracker, Event Router, and Slash Commands
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
+
+local function GetChatTitle()
+    return FNC.RAINBOW_TITLE or "|cFF00FFCCForeverNamePlateColors|r"
+end
+
+-- Error Tracker: Always logs FNC errors to SavedVariables on disk; prints to chat if enabled in settings
+local prevErrorHandler = geterrorhandler()
+seterrorhandler(function(err)
+    local msg = tostring(err)
+    if msg:find("ForeverNamePlateColors", 1, true) then
+        ForeverNamePlateColorsDB = ForeverNamePlateColorsDB or {}
+        if type(ForeverNamePlateColorsDB.errorLog) ~= "table" then
+            ForeverNamePlateColorsDB.errorLog = {}
+        end
+
+        local stack = debugstack(2, 8, 8) or ""
+        local timestamp = date and date("%Y-%m-%d %H:%M:%S") or "Unknown Time"
+        local entry = string.format("[%s] %s\n%s", timestamp, msg, stack)
+        local log = ForeverNamePlateColorsDB.errorLog
+
+        if log[#log] ~= entry then
+            log[#log + 1] = entry
+            if #log > 25 then
+                table.remove(log, 1)
+            end
+        end
+
+        if ForeverNamePlateColorsDB.showErrors then
+            print("[" .. GetChatTitle() .. " |cFFFF5555Error|r] " .. msg)
+        end
+    end
+
+    if prevErrorHandler then
+        return prevErrorHandler(err)
+    end
+end)
+
 local mainFrame = CreateFrame("Frame", "ForeverNamePlateColorsMainFrame", UIParent)
 FNC.mainFrame = mainFrame
 
@@ -39,7 +76,7 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
         FNC:UpdateConfigPanelUI()
-        print("|cFF00FFCCForeverNamePlateColors|r v1.4.0 loaded successfully. Type |cFFFFFFFF/fnc|r to open options.")
+        print(GetChatTitle() .. " v1.4.0 loaded successfully. Type |cFFFFFFFF/fnc|r to open options.")
     elseif event == "PLAYER_ENTERING_WORLD" then
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
@@ -66,12 +103,12 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
     end
 end)
 
--- Slash Command Handler (/fnc only)
+-- Slash Command Handler (/fnc)
 SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
     msg = string.lower(strtrim(msg or ""))
     if msg == "toggle" then
         ForeverNamePlateColorsDB.enabled = not ForeverNamePlateColorsDB.enabled
-        print("|cFF00FFCCForeverNamePlateColors|r Enabled: " .. tostring(ForeverNamePlateColorsDB.enabled))
+        print(GetChatTitle() .. " Enabled: " .. tostring(ForeverNamePlateColorsDB.enabled))
         if ForeverNamePlateColorsDB.enabled then
             FNC:RefreshAllPlates()
         else
@@ -79,6 +116,21 @@ SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
             FNC:ResetAllPlates()
         end
         FNC:UpdateConfigPanelUI()
+    elseif msg == "errors" then
+        local log = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.errorLog
+        if not log or #log == 0 then
+            print(GetChatTitle() .. " No recorded errors.")
+        else
+            print(GetChatTitle() .. " Recorded errors (" .. #log .. "):")
+            for i, entry in ipairs(log) do
+                print("|cFFFF5555[" .. i .. "]|r " .. entry)
+            end
+        end
+    elseif msg == "clearerrors" then
+        if ForeverNamePlateColorsDB then
+            ForeverNamePlateColorsDB.errorLog = {}
+        end
+        print(GetChatTitle() .. " Error log cleared.")
     else
         if Settings and Settings.OpenToCategory and FNC.settingsCategory then
             Settings.OpenToCategory(FNC.settingsCategory.ID)
