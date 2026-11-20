@@ -6,19 +6,43 @@
 local addonName, FNC = ...
 
 local function IsLevelText(text)
-    if not text or text == "" then return false end
-    local clean = text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):match("^%s*(.-)%s*$")
+    if type(text) ~= "string" or text == "" then return false end
+    if issecretvalue and issecretvalue(text) then return false end
+    local ok, clean = pcall(function()
+        return text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):match("^%s*(.-)%s*$")
+    end)
+    if not ok or type(clean) ~= "string" then return false end
     return clean:match("^%d+%+?$") ~= nil or clean == "??"
 end
 
-local function SetLevelRegionsAlpha(frame, alpha, nameObj, subtitleObj)
-    if not frame then return end
-    for _, region in ipairs({ frame:GetRegions() }) do
-        if region:IsObjectType("FontString") and region ~= nameObj and region ~= subtitleObj then
+-- Zero-allocation region iterator via select()
+local function SetLevelRegionsAlphaHelper(alpha, nameObj, subtitleObj, n, ...)
+    for i = 1, n do
+        local region = select(i, ...)
+        if region and (not region:IsForbidden()) and region:IsObjectType("FontString") and region ~= nameObj and region ~= subtitleObj then
             local parentKey = region.GetParentKey and region:GetParentKey() or ""
-            if parentKey:lower():find("level") or IsLevelText(region:GetText()) then
+            if (type(parentKey) == "string" and parentKey:lower():find("level")) or IsLevelText(region:GetText()) then
                 region:SetAlpha(alpha)
             end
+        end
+    end
+end
+
+local function SetLevelRegionsAlpha(frame, alpha, nameObj, subtitleObj)
+    if not frame or (frame.IsForbidden and frame:IsForbidden()) then return end
+    SetLevelRegionsAlphaHelper(alpha, nameObj, subtitleObj, select("#", frame:GetRegions()), frame:GetRegions())
+end
+
+-- Zero-allocation child frame iterator via select()
+local function SetChildLevelFramesAlphaHelper(alpha, nameObj, subtitleObj, n, ...)
+    for i = 1, n do
+        local child = select(i, ...)
+        if child and (not child:IsForbidden()) and child ~= subtitleObj then
+            local parentKey = child.GetParentKey and child:GetParentKey() or ""
+            if type(parentKey) == "string" and (parentKey:lower():find("level") or parentKey == "ClassificationFrame") then
+                child:SetAlpha(alpha)
+            end
+            SetLevelRegionsAlpha(child, alpha, nameObj, subtitleObj)
         end
     end
 end
@@ -32,7 +56,6 @@ local function UpdateHeadlineMode(uf, unit, showHealthBar)
         hb:SetAlpha(alpha)
     end
 
-    -- Explicit level & classification frames/fontstrings
     if uf.levelText then uf.levelText:SetAlpha(alpha) end
     if uf.LevelText then uf.LevelText:SetAlpha(alpha) end
     if uf.level then uf.level:SetAlpha(alpha) end
@@ -48,20 +71,10 @@ local function UpdateHeadlineMode(uf, unit, showHealthBar)
         if hb.LevelFrame then hb.LevelFrame:SetAlpha(alpha) end
     end
 
-    -- Scan direct regions and child frames (e.g. LevelFrame / HealthBarsContainer)
     local nameObj = uf.name or uf.Name
     SetLevelRegionsAlpha(uf, alpha, nameObj, uf.fncSubtitle)
     SetLevelRegionsAlpha(hb, alpha, nameObj, uf.fncSubtitle)
-
-    for _, child in ipairs({ uf:GetChildren() }) do
-        if child ~= uf.fncSubtitle then
-            local parentKey = child.GetParentKey and child:GetParentKey() or ""
-            if parentKey:lower():find("level") or parentKey == "ClassificationFrame" then
-                child:SetAlpha(alpha)
-            end
-            SetLevelRegionsAlpha(child, alpha, nameObj, uf.fncSubtitle)
-        end
-    end
+    SetChildLevelFramesAlphaHelper(alpha, nameObj, uf.fncSubtitle, select("#", uf:GetChildren()), uf:GetChildren())
 end
 
 function FNC:ResetUnitFrame(uf)
@@ -73,20 +86,21 @@ function FNC:ResetUnitFrame(uf)
 end
 
 function FNC:UpdateUnitFrame(uf, unit)
-    if not ForeverNamePlateColorsDB.enabled then return end
+    if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
     if not uf or uf:IsForbidden() then return end
-    if not unit then return end
+    if type(unit) ~= "string" or unit == "" then return end
 
     local isSubgroup = FNC.IsInMySubgroup(unit)
     local isRaidMember = UnitInRaid(unit) ~= nil
     local isUnitPlayer = UnitIsPlayer(unit)
     local isEnemy = UnitIsEnemy("player", unit)
     local canAttack = UnitCanAttack("player", unit)
+    local isTapDenied = canAttack and (not isUnitPlayer) and UnitIsTapDenied and UnitIsTapDenied(unit)
 
     for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
         local cat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[cfg.key]
-        -- For ActiveQuestUnit, if disabled, allow unit to fall through to generic NPC or Enemy category
-        local canMatch = (cfg.key ~= "ActiveQuestUnit") or (cat and cat.enabled)
+        -- For ActiveQuestUnit, if disabled or tapped by another player, let unit fall through
+        local canMatch = (cfg.key ~= "ActiveQuestUnit") or (cat and cat.enabled and not isTapDenied)
 
         if canMatch and cfg.match(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf) then
             if not cat or not cat.enabled then
@@ -115,7 +129,6 @@ function FNC:UpdateUnitFrame(uf, unit)
             local npcCat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["NPC"]
 
             -- Headline Mode: Show or Hide Health Bar and Level Text
-            -- Enemy quest mobs always show health bar; friendly quest NPCs respect the NPC Headline Mode setting
             local showHB = (cat.showHealthBar ~= false)
             if cfg.key == "ActiveQuestUnit" then
                 if canAttack then
@@ -128,17 +141,20 @@ function FNC:UpdateUnitFrame(uf, unit)
             end
             UpdateHeadlineMode(uf, unit, showHB)
 
-            -- Health Bar Color override (only if health bar is visible)
-            if showHB and activeStyle.healthEnabled and activeStyle.colorHealth then
+            -- Health Bar Color override (skip if tapped by another player so Blizzard grey tap color shows)
+            if showHB and (not isTapDenied) and activeStyle.healthEnabled and activeStyle.colorHealth then
                 if hb then
                     hb:SetStatusBarColor(activeStyle.colorHealth.r, activeStyle.colorHealth.g, activeStyle.colorHealth.b)
                 end
             end
 
-            -- Name Text Color override
+            -- Name Text Color override (apply both TextColor and VertexColor so Blizzard doesn't re-tint green)
             if activeStyle.nameEnabled and activeStyle.colorName then
                 if nameText then
                     nameText:SetTextColor(activeStyle.colorName.r, activeStyle.colorName.g, activeStyle.colorName.b)
+                    if nameText.SetVertexColor then
+                        nameText:SetVertexColor(activeStyle.colorName.r, activeStyle.colorName.g, activeStyle.colorName.b)
+                    end
                 end
             end
 
@@ -214,6 +230,14 @@ function FNC:RefreshAllPlates()
 end
 
 -- Hook into Blizzard's internal update functions so colors and headline states persist
+if CompactUnitFrame_UpdateAll then
+    hooksecurefunc("CompactUnitFrame_UpdateAll", function(frame)
+        if frame and frame.unit and not frame:IsForbidden() then
+            FNC:UpdateUnitFrame(frame, frame.unit)
+        end
+    end)
+end
+
 if CompactUnitFrame_UpdateHealthColor then
     hooksecurefunc("CompactUnitFrame_UpdateHealthColor", function(frame)
         if frame and frame.unit and not frame:IsForbidden() then
@@ -224,6 +248,14 @@ end
 
 if CompactUnitFrame_UpdateName then
     hooksecurefunc("CompactUnitFrame_UpdateName", function(frame)
+        if frame and frame.unit and not frame:IsForbidden() then
+            FNC:UpdateUnitFrame(frame, frame.unit)
+        end
+    end)
+end
+
+if CompactUnitFrame_UpdateSelectionHighlight then
+    hooksecurefunc("CompactUnitFrame_UpdateSelectionHighlight", function(frame)
         if frame and frame.unit and not frame:IsForbidden() then
             FNC:UpdateUnitFrame(frame, frame.unit)
         end

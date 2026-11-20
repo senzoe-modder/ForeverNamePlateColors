@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- Options.lua
--- Blizzard Settings Canvas, Category Cards, Advanced Sub-Rows, & Color Picker
+-- Lazy-Loaded Blizzard Settings Canvas, Category Cards, & Color Picker
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
@@ -17,139 +17,19 @@ local function SetTooltip(frame, text)
     end)
 end
 
--- Options Panel Setup
+-- Register lightweight shell frame at load time; build heavy cards lazily on first OnShow
 local configFrame = CreateFrame("Frame", "FNCConfigPanel", UIParent)
 configFrame.name = "ForeverNamePlateColors"
 configFrame:SetSize(620, 520)
 FNC.configFrame = configFrame
 
-local title = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOPLEFT", 16, -16)
-title:SetText("ForeverNamePlateColors Options")
-
-local scrollFrame = CreateFrame("ScrollFrame", "FNCConfigScrollFrame", configFrame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", 10, -42)
-scrollFrame:SetPoint("BOTTOMRIGHT", -26, 10)
-scrollFrame:EnableMouseWheel(true)
-scrollFrame:SetScript("OnMouseWheel", function(self, delta)
-    local cur = self:GetVerticalScroll()
-    local max = self:GetVerticalScrollRange()
-    local step = 35
-    local new = cur - (delta * step)
-    if new < 0 then new = 0 end
-    if new > max then new = max end
-    self:SetVerticalScroll(new)
-end)
-
-local scrollChild = CreateFrame("Frame", "FNCConfigScrollChild", scrollFrame)
-scrollChild:SetSize(570, 600)
-scrollFrame:SetScrollChild(scrollChild)
-
--- Global Settings Box
-local globalBox = CreateFrame("Frame", nil, scrollChild, "BackdropTemplate")
-globalBox:SetSize(560, 74)
-globalBox:SetPoint("TOPLEFT", 6, -6)
-globalBox:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 10,
-    insets = { left = 2, right = 2, top = 2, bottom = 2 }
-})
-globalBox:SetBackdropColor(0.08, 0.08, 0.08, 0.85)
-globalBox:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-
-local enableCB = CreateFrame("CheckButton", nil, globalBox, "InterfaceOptionsCheckButtonTemplate")
-enableCB:SetPoint("TOPLEFT", 10, -6)
-enableCB.Text:SetText("Enable Addon")
-SetTooltip(enableCB, "Master toggle for ForeverNamePlateColors.\nWhen unchecked, all nameplates revert to Blizzard defaults.")
-
-enableCB:SetScript("OnClick", function(self)
-    ForeverNamePlateColorsDB.enabled = self:GetChecked()
-    FNC:SyncAllCVars()
-    FNC:UpdateConfigPanelUI()
-    if ForeverNamePlateColorsDB.enabled then
-        FNC:RefreshAllPlates()
-    else
-        FNC:ResetAllPlates()
-    end
-end)
-
-local matchBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
-matchBtn:SetSize(200, 22)
-matchBtn:SetPoint("BOTTOMLEFT", 10, 8)
-matchBtn:SetText("Match Name to Health Colors")
-SetTooltip(matchBtn, "One-click action to copy every category's health bar color to its name color.\nYou can still customize individual name colors afterwards.")
-
-matchBtn:SetScript("OnClick", function()
-    local db = ForeverNamePlateColorsDB
-    if not db or not db.categories then return end
-    for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-        local cat = db.categories[cfg.key]
-        if cat and cat.colorHealth then
-            cat.colorName = { r = cat.colorHealth.r, g = cat.colorHealth.g, b = cat.colorHealth.b }
-        end
-        if cfg.subCategories and cat and cat.subCategories then
-            for _, subCfg in ipairs(cfg.subCategories) do
-                local subCat = cat.subCategories[subCfg.key]
-                if subCat and subCat.colorHealth then
-                    subCat.colorName = { r = subCat.colorHealth.r, g = subCat.colorHealth.g, b = subCat.colorHealth.b }
-                end
-            end
-        end
-    end
-    FNC:UpdateConfigPanelUI()
-    FNC:RefreshAllPlates()
-    print("|cFF00FFCCForeverNamePlateColors|r All name colors matched to their health colors.")
-end)
-
-local enableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
-enableAllBtn:SetSize(145, 22)
-enableAllBtn:SetPoint("LEFT", matchBtn, "RIGHT", 10, 0)
-enableAllBtn:SetText("Enable All Categories")
-SetTooltip(enableAllBtn, "Enable color overrides across all categories.\nDoes not change your individual health/name channel settings.")
-
-enableAllBtn:SetScript("OnClick", function()
-    local db = ForeverNamePlateColorsDB
-    if not db or not db.categories then return end
-    for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-        local cat = db.categories[cfg.key]
-        if cat then cat.enabled = true end
-    end
-    FNC:SyncAllCVars()
-    FNC:UpdateConfigPanelUI()
-    FNC:RefreshAllPlates()
-    print("|cFF00FFCCForeverNamePlateColors|r All categories enabled.")
-end)
-
-local disableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
-disableAllBtn:SetSize(145, 22)
-disableAllBtn:SetPoint("LEFT", enableAllBtn, "RIGHT", 10, 0)
-disableAllBtn:SetText("Disable All Categories")
-SetTooltip(disableAllBtn, "Disable color overrides across all categories.\nGreys out all category controls and restores Blizzard defaults.")
-
-disableAllBtn:SetScript("OnClick", function()
-    local db = ForeverNamePlateColorsDB
-    if not db or not db.categories then return end
-    for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-        local cat = db.categories[cfg.key]
-        if cat then
-            cat.enabled = false
-            if cfg.syncHealthBarWithEnabled then
-                cat.showHealthBar = false
-            end
-        end
-    end
-    FNC:SyncAllCVars()
-    FNC:UpdateConfigPanelUI()
-    FNC:RefreshAllPlates()
-    print("|cFF00FFCCForeverNamePlateColors|r All categories disabled.")
-end)
-
--- Category Card Builder + Expandable Advanced Sub-Rows
 FNC.categoryCards = {}
 FNC.cardsByKey = {}
 FNC.sectionHeaders = {}
 FNC.headersByGroup = {}
+
+local uiBuilt = false
+local scrollChild, enableCB, matchBtn, enableAllBtn, disableAllBtn
 
 local function CreateSectionHeader(parent, groupKey, label)
     local header = CreateFrame("Frame", nil, parent)
@@ -587,17 +467,145 @@ local function CreateCategoryCard(parent, cfg)
     return card
 end
 
--- Instantiate Section Headers & Category Cards inside scrollChild
-for _, group in ipairs(FNC.UI_GROUPS) do
-    CreateSectionHeader(scrollChild, group.key, group.label)
-    for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-        if cfg.group == group.key then
-            CreateCategoryCard(scrollChild, cfg)
+local function BuildConfigPanelUI()
+    if uiBuilt then return end
+    uiBuilt = true
+
+    local title = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("ForeverNamePlateColors Options")
+
+    local scrollFrame = CreateFrame("ScrollFrame", "FNCConfigScrollFrame", configFrame, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 10, -42)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -26, 10)
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll()
+        local max = self:GetVerticalScrollRange()
+        local step = 35
+        local new = cur - (delta * step)
+        if new < 0 then new = 0 end
+        if new > max then new = max end
+        self:SetVerticalScroll(new)
+    end)
+
+    scrollChild = CreateFrame("Frame", "FNCConfigScrollChild", scrollFrame)
+    scrollChild:SetSize(570, 600)
+    scrollFrame:SetScrollChild(scrollChild)
+
+    -- Global Settings Box
+    local globalBox = CreateFrame("Frame", nil, scrollChild, "BackdropTemplate")
+    globalBox:SetSize(560, 74)
+    globalBox:SetPoint("TOPLEFT", 6, -6)
+    globalBox:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 10,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
+    })
+    globalBox:SetBackdropColor(0.08, 0.08, 0.08, 0.85)
+    globalBox:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+
+    enableCB = CreateFrame("CheckButton", nil, globalBox, "InterfaceOptionsCheckButtonTemplate")
+    enableCB:SetPoint("TOPLEFT", 10, -6)
+    enableCB.Text:SetText("Enable Addon")
+    SetTooltip(enableCB, "Master toggle for ForeverNamePlateColors.\nWhen unchecked, all nameplates revert to Blizzard defaults.")
+
+    enableCB:SetScript("OnClick", function(self)
+        ForeverNamePlateColorsDB.enabled = self:GetChecked()
+        FNC:SyncAllCVars()
+        FNC:UpdateConfigPanelUI()
+        if ForeverNamePlateColorsDB.enabled then
+            FNC:RefreshAllPlates()
+        else
+            FNC:ResetAllPlates()
+        end
+    end)
+
+    matchBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
+    matchBtn:SetSize(200, 22)
+    matchBtn:SetPoint("BOTTOMLEFT", 10, 8)
+    matchBtn:SetText("Match Name to Health Colors")
+    SetTooltip(matchBtn, "One-click action to copy every category's health bar color to its name color.\nYou can still customize individual name colors afterwards.")
+
+    matchBtn:SetScript("OnClick", function()
+        local db = ForeverNamePlateColorsDB
+        if not db or not db.categories then return end
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
+            local cat = db.categories[cfg.key]
+            if cat and cat.colorHealth then
+                cat.colorName = { r = cat.colorHealth.r, g = cat.colorHealth.g, b = cat.colorHealth.b }
+            end
+            if cfg.subCategories and cat and cat.subCategories then
+                for _, subCfg in ipairs(cfg.subCategories) do
+                    local subCat = cat.subCategories[subCfg.key]
+                    if subCat and subCat.colorHealth then
+                        subCat.colorName = { r = subCat.colorHealth.r, g = subCat.colorHealth.g, b = subCat.colorHealth.b }
+                    end
+                end
+            end
+        end
+        FNC:UpdateConfigPanelUI()
+        FNC:RefreshAllPlates()
+        print("|cFF00FFCCForeverNamePlateColors|r All name colors matched to their health colors.")
+    end)
+
+    enableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
+    enableAllBtn:SetSize(145, 22)
+    enableAllBtn:SetPoint("LEFT", matchBtn, "RIGHT", 10, 0)
+    enableAllBtn:SetText("Enable All Categories")
+    SetTooltip(enableAllBtn, "Enable color overrides across all categories.\nDoes not change your individual health/name channel settings.")
+
+    enableAllBtn:SetScript("OnClick", function()
+        local db = ForeverNamePlateColorsDB
+        if not db or not db.categories then return end
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
+            local cat = db.categories[cfg.key]
+            if cat then cat.enabled = true end
+        end
+        FNC:SyncAllCVars()
+        FNC:UpdateConfigPanelUI()
+        FNC:RefreshAllPlates()
+        print("|cFF00FFCCForeverNamePlateColors|r All categories enabled.")
+    end)
+
+    disableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
+    disableAllBtn:SetSize(145, 22)
+    disableAllBtn:SetPoint("LEFT", enableAllBtn, "RIGHT", 10, 0)
+    disableAllBtn:SetText("Disable All Categories")
+    SetTooltip(disableAllBtn, "Disable color overrides across all categories.\nGreys out all category controls and restores Blizzard defaults.")
+
+    disableAllBtn:SetScript("OnClick", function()
+        local db = ForeverNamePlateColorsDB
+        if not db or not db.categories then return end
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
+            local cat = db.categories[cfg.key]
+            if cat then
+                cat.enabled = false
+                if cfg.syncHealthBarWithEnabled then
+                    cat.showHealthBar = false
+                end
+            end
+        end
+        FNC:SyncAllCVars()
+        FNC:UpdateConfigPanelUI()
+        FNC:RefreshAllPlates()
+        print("|cFF00FFCCForeverNamePlateColors|r All categories disabled.")
+    end)
+
+    -- Instantiate Section Headers & Category Cards inside scrollChild
+    for _, group in ipairs(FNC.UI_GROUPS) do
+        CreateSectionHeader(scrollChild, group.key, group.label)
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
+            if cfg.group == group.key then
+                CreateCategoryCard(scrollChild, cfg)
+            end
         end
     end
 end
 
 function FNC:RelayoutConfigPanel()
+    if not uiBuilt then return end
     local cardY = -96
     for groupIdx, group in ipairs(FNC.UI_GROUPS) do
         if groupIdx > 1 then
@@ -639,10 +647,8 @@ function FNC:RelayoutConfigPanel()
     scrollChild:SetHeight(math.abs(cardY) + 20)
 end
 
-FNC:RelayoutConfigPanel()
-
 function FNC:UpdateConfigPanelUI()
-    if not configFrame then return end
+    if not uiBuilt then return end
 
     FNC:RelayoutConfigPanel()
 
@@ -867,6 +873,7 @@ function FNC:UpdateConfigPanelUI()
 end
 
 configFrame:SetScript("OnShow", function()
+    BuildConfigPanelUI()
     FNC:UpdateConfigPanelUI()
 end)
 

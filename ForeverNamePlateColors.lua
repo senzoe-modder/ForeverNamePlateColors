@@ -7,12 +7,25 @@ local addonName, FNC = ...
 local mainFrame = CreateFrame("Frame", "ForeverNamePlateColorsMainFrame", UIParent)
 FNC.mainFrame = mainFrame
 
+-- Debounced Quest Log Refresh (coalesces burst QUEST_LOG_UPDATE events within the same frame)
+local questRefreshQueued = false
+local function QueueQuestRefresh()
+    if questRefreshQueued then return end
+    questRefreshQueued = true
+    C_Timer.After(0, function()
+        questRefreshQueued = false
+        FNC:RebuildQuestCache()
+        FNC:RefreshAllPlates()
+    end)
+end
+
 -- Register Core, Group, and Quest Events
 mainFrame:RegisterEvent("ADDON_LOADED")
 mainFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 mainFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 mainFrame:RegisterEvent("UNIT_NAME_UPDATE")
 mainFrame:RegisterEvent("UNIT_LEVEL")
+mainFrame:RegisterEvent("UNIT_FACTION")
 mainFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 mainFrame:RegisterEvent("QUEST_LOG_UPDATE")
 mainFrame:RegisterEvent("QUEST_ACCEPTED")
@@ -31,7 +44,7 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
         FNC:RefreshAllPlates()
-    elseif event == "NAME_PLATE_UNIT_ADDED" or event == "UNIT_NAME_UPDATE" or event == "UNIT_LEVEL" then
+    elseif event == "NAME_PLATE_UNIT_ADDED" or event == "UNIT_NAME_UPDATE" or event == "UNIT_LEVEL" or event == "UNIT_FACTION" then
         local unit = arg1
         if unit then
             local plate = C_NamePlate.GetNamePlateForUnit(unit)
@@ -45,17 +58,15 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
     elseif event == "GROUP_ROSTER_UPDATE" then
         FNC:RefreshAllPlates()
     elseif event == "QUEST_LOG_UPDATE" or event == "QUEST_ACCEPTED" or event == "QUEST_REMOVED" then
-        FNC:RebuildQuestCache()
-        FNC:RefreshAllPlates()
+        QueueQuestRefresh()
     elseif event == "UNIT_QUEST_LOG_CHANGED" then
         if not arg1 or arg1 == "player" then
-            FNC:RebuildQuestCache()
-            FNC:RefreshAllPlates()
+            QueueQuestRefresh()
         end
     end
 end)
 
--- Slash Command Handler
+-- Slash Command Handler (/fnc only)
 SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
     msg = string.lower(strtrim(msg or ""))
     if msg == "toggle" then
