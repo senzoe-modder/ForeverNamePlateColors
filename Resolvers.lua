@@ -10,9 +10,28 @@ local activeQuestTitles = {}
 local incompleteObjectiveTargets = {}
 local turnInTargets = {}
 local questTextCorpus = ""
+local questCacheGeneration = 0
 
 -- Reusable scratch table for tooltip lines (zero per-call table allocation)
 local tooltipLines = {}
+
+-- Short-lived per-pass caches to avoid repeated tooltip/threat/quest scans on bursty nameplate updates
+local tooltipCache = setmetatable({}, { __mode = "k" })
+local taggedCache = {}
+local questUnitCache = {}
+local subtitleCache = {}
+local cacheGeneration = -1
+
+local function EnsurePassCacheFresh()
+    local curGen = (FNC.updatePassGeneration or 0) * 100000 + questCacheGeneration
+    if cacheGeneration ~= curGen then
+        cacheGeneration = curGen
+        wipe(tooltipCache)
+        wipe(taggedCache)
+        wipe(questUnitCache)
+        wipe(subtitleCache)
+    end
+end
 
 -- Blizzard Classic Era Quest Indicator Texture FileDataIDs
 local QUEST_TEXTURE_FILE_IDS = {
@@ -119,6 +138,7 @@ local function IsMatchedInQuestieLiveTooltips(npcID)
 end
 
 function FNC:RebuildQuestCache()
+    questCacheGeneration = questCacheGeneration + 1
     wipe(activeQuestTitles)
     wipe(incompleteObjectiveTargets)
     wipe(turnInTargets)
@@ -287,8 +307,18 @@ local function CheckTaggedByPlayerOrPartyInternal(unit)
 end
 
 function FNC:IsTaggedByPlayerOrParty(unit)
+    if not IsSafeString(unit) then return false end
+    EnsurePassCacheFresh()
+    local guid = UnitGUID and UnitGUID(unit) or ""
+    local key = unit .. "|" .. tostring(guid)
+    local cached = taggedCache[key]
+    if cached ~= nil then
+        return cached
+    end
     local ok, result = pcall(CheckTaggedByPlayerOrPartyInternal, unit)
-    return ok and result == true
+    local res = ok and result == true
+    taggedCache[key] = res
+    return res
 end
 
 -- Hidden Tooltip Scraper for NPC Role/Job Subtitles, Minion Owner Tags, and Quest Objectives
@@ -301,6 +331,17 @@ local function GetUnitTooltipLines(unit)
 
     if not IsSafeString(unit) then
         return tooltipLines, 0
+    end
+
+    EnsurePassCacheFresh()
+    local guid = UnitGUID and UnitGUID(unit) or ""
+    local cacheKey = unit .. "|" .. tostring(guid)
+    local cachedEntry = tooltipCache[cacheKey]
+    if cachedEntry then
+        for i = 1, cachedEntry.count do
+            tooltipLines[i] = cachedEntry[i]
+        end
+        return tooltipLines, cachedEntry.count
     end
 
     if C_TooltipInfo and C_TooltipInfo.GetUnit then
@@ -340,6 +381,12 @@ local function GetUnitTooltipLines(unit)
             end
         end)
     end
+
+    local saved = { count = count }
+    for i = 1, count do
+        saved[i] = tooltipLines[i]
+    end
+    tooltipCache[cacheKey] = saved
 
     return tooltipLines, count
 end
@@ -493,8 +540,18 @@ local function CheckActiveQuestUnitInternal(unit, uf)
 end
 
 function FNC:IsActiveQuestUnit(unit, uf)
+    if not IsSafeString(unit) then return false end
+    EnsurePassCacheFresh()
+    local guid = UnitGUID and UnitGUID(unit) or ""
+    local key = unit .. "|" .. tostring(guid)
+    local cached = questUnitCache[key]
+    if cached ~= nil then
+        return cached
+    end
     local ok, result = pcall(CheckActiveQuestUnitInternal, unit, uf)
-    return ok and result == true
+    local res = ok and result == true
+    questUnitCache[key] = res
+    return res
 end
 
 local function GetNPCSubtitleInternal(unit)
@@ -529,8 +586,17 @@ local function GetNPCSubtitleInternal(unit)
 end
 
 function FNC:GetNPCSubtitle(unit)
+    if not IsSafeString(unit) then return nil end
+    EnsurePassCacheFresh()
+    local guid = UnitGUID and UnitGUID(unit) or ""
+    local key = unit .. "|" .. tostring(guid)
+    if subtitleCache[key] ~= nil then
+        return subtitleCache[key] or nil
+    end
     local ok, result = pcall(GetNPCSubtitleInternal, unit)
-    return ok and result or nil
+    local res = ok and result or false
+    subtitleCache[key] = res
+    return res or nil
 end
 
 -- Subgroup Check using UnitInRaid index lookup

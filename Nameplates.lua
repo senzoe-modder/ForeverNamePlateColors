@@ -4,6 +4,7 @@
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
+FNC.updatePassGeneration = FNC.updatePassGeneration or 0
 
 -- Track hooked UnitFrames, hooked FontStrings, cached original colors, and custom subtitles
 local hookedFrames = setmetatable({}, { __mode = "k" })
@@ -13,13 +14,52 @@ local customSubtitles = setmetatable({}, { __mode = "k" })
 local hiddenByFNC = setmetatable({}, { __mode = "k" })
 local customNameApplied = setmetatable({}, { __mode = "k" })
 
+-- Cached frame parts & scanned extra nodes per UnitFrame to avoid repeated tree walks
+local cachedNameFS = setmetatable({}, { __mode = "k" })
+local cachedHealthBar = setmetatable({}, { __mode = "k" })
+local cachedExtras = setmetatable({}, { __mode = "k" })
+
+-- Coalesce multiple updates for the same UnitFrame within a single render frame
+local pendingUnitFrames = setmetatable({}, { __mode = "k" })
+local pendingFlushScheduled = false
+
+local function FlushPendingUnitFrames()
+    pendingFlushScheduled = false
+    FNC.updatePassGeneration = (FNC.updatePassGeneration or 0) + 1
+    local batch = {}
+    for uf, unit in pairs(pendingUnitFrames) do
+        pendingUnitFrames[uf] = nil
+        batch[#batch + 1] = { uf = uf, unit = unit }
+    end
+    for i = 1, #batch do
+        local item = batch[i]
+        local uf = item.uf
+        if uf and not (uf.IsForbidden and uf:IsForbidden()) then
+            FNC:UpdateUnitFrameNow(uf, item.unit)
+        end
+    end
+end
+
+local function ScheduleUnitFrameUpdate(uf, unit)
+    if not uf or (uf.IsForbidden and uf:IsForbidden()) then return end
+    if uf._fncUpdating then return end
+    pendingUnitFrames[uf] = unit or uf.displayedUnit or uf.unit or true
+    if not pendingFlushScheduled then
+        pendingFlushScheduled = true
+        C_Timer.After(0, FlushPendingUnitFrames)
+    end
+end
+
+function FNC:QueueUnitFrameUpdate(uf, unit)
+    ScheduleUnitFrameUpdate(uf, unit)
+end
+
 local function SafeSetShown(widget, visible)
     if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
     if widget.SetShown then
         pcall(widget.SetShown, widget, visible and true or false)
     end
 end
-
 
 local function HideWidgetForHeadline(widget)
     if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
@@ -102,13 +142,17 @@ local function GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
     return nil
 end
 
--- Locate the primary name FontString on a Classic Era UnitFrame
+-- Locate and cache the primary name FontString on a Classic Era UnitFrame
 local function GetUnitFrameNameText(uf)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return nil end
+    if cachedNameFS[uf] then return cachedNameFS[uf] end
+
     if uf.NameContainer and uf.NameContainer.Name and uf.NameContainer.Name.SetTextColor then
+        cachedNameFS[uf] = uf.NameContainer.Name
         return uf.NameContainer.Name
     end
     if uf.name and uf.name.SetTextColor then
+        cachedNameFS[uf] = uf.name
         return uf.name
     end
 
@@ -118,6 +162,7 @@ local function GetUnitFrameNameText(uf)
         if region and region:IsObjectType("FontString") then
             local parentKey = region.GetParentKey and region:GetParentKey()
             if IsSafeString(parentKey) and parentKey:lower():find("name") then
+                cachedNameFS[uf] = region
                 return region
             end
         end
@@ -126,13 +171,17 @@ local function GetUnitFrameNameText(uf)
     return nil
 end
 
--- Locate the HealthBar on a Classic Era UnitFrame
+-- Locate and cache the HealthBar on a Classic Era UnitFrame
 local function GetUnitFrameHealthBar(uf)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return nil end
+    if cachedHealthBar[uf] then return cachedHealthBar[uf] end
+
     if uf.healthBar and uf.healthBar.SetStatusBarColor then
+        cachedHealthBar[uf] = uf.healthBar
         return uf.healthBar
     end
     if uf.HealthBarsContainer and uf.HealthBarsContainer.healthBar and uf.HealthBarsContainer.healthBar.SetStatusBarColor then
+        cachedHealthBar[uf] = uf.HealthBarsContainer.healthBar
         return uf.HealthBarsContainer.healthBar
     end
 
@@ -142,6 +191,7 @@ local function GetUnitFrameHealthBar(uf)
         if child and not (child.IsForbidden and child:IsForbidden()) and child:IsObjectType("StatusBar") then
             local parentKey = child.GetParentKey and child:GetParentKey()
             if IsSafeString(parentKey) and parentKey:lower():find("health") then
+                cachedHealthBar[uf] = child
                 return child
             end
         end
@@ -150,28 +200,18 @@ local function GetUnitFrameHealthBar(uf)
     return nil
 end
 
--- Toggle visibility of ONLY the health bar, borders, and unit level/skull elements
--- (never touch uf.castBar or uf.powerBar, which are separate StatusBars on player plates)
-local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
+-- Collect extra FontStrings / health / level / border regions & children once per UnitFrame
+-- (never touches castBar or powerBar, which are separate StatusBars on player plates)
+local function CollectFrameTreeExtrasInto(frame, nameFS, outList, depth)
     if not frame or depth > 4 or (frame.IsForbidden and frame:IsForbidden()) then return end
 
     if frame.GetNumRegions then
         local numRegions = frame:GetNumRegions()
         for i = 1, numRegions do
             local region = select(i, frame:GetRegions())
-            if region and region ~= nameFS and region ~= subFS then
+            if region and region ~= nameFS and not customSubtitles[region] then
                 if region:IsObjectType("FontString") then
-                    if not visible then
-                        HideWidgetForHeadline(region)
-                        if region.SetAlpha then
-                            pcall(region.SetAlpha, region, 0)
-                        end
-                    elseif hiddenByFNC[region] then
-                        RestoreWidgetFromHeadline(region)
-                        if region.SetAlpha then
-                            pcall(region.SetAlpha, region, 1)
-                        end
-                    end
+                    outList[#outList + 1] = { widget = region, isFontString = true }
                 else
                     local parentKey = region.GetParentKey and region:GetParentKey()
                     local regName = region.GetName and region:GetName()
@@ -179,11 +219,7 @@ local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
                     local nameLower = IsSafeString(regName) and regName:lower() or ""
                     if keyLower:find("level") or keyLower:find("health") or keyLower:find("border")
                         or nameLower:find("level") or nameLower:find("health") or nameLower:find("border") then
-                        if not visible then
-                            HideWidgetForHeadline(region)
-                        else
-                            RestoreWidgetFromHeadline(region)
-                        end
+                        outList[#outList + 1] = { widget = region, isFontString = false }
                     end
                 end
             end
@@ -200,22 +236,60 @@ local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
                 local keyLower = IsSafeString(parentKey) and parentKey:lower() or ""
                 local nameLower = IsSafeString(childName) and childName:lower() or ""
 
-                -- Skip castBar and powerBar so we never force-show Blizzard's yellow cast bar
                 local isCastOrPower = keyLower:find("cast") or keyLower:find("power")
                     or nameLower:find("cast") or nameLower:find("power")
 
                 if not isCastOrPower and (keyLower:find("health") or keyLower:find("level")
                     or nameLower:find("health") or nameLower:find("level")) then
-                    if not visible then
-                        HideWidgetForHeadline(child)
-                    else
-                        RestoreWidgetFromHeadline(child)
-                    end
+                    outList[#outList + 1] = { widget = child, isFontString = false }
                 end
 
                 if not isCastOrPower then
-                    ToggleFrameTreeExtras(child, nameFS, subFS, visible, depth + 1)
+                    CollectFrameTreeExtrasInto(child, nameFS, outList, depth + 1)
                 end
+            end
+        end
+    end
+end
+
+local function GetOrBuildExtras(uf, nameFS)
+    local extras = cachedExtras[uf]
+    if extras then return extras end
+
+    extras = {}
+    CollectFrameTreeExtrasInto(uf, nameFS, extras, 0)
+
+    local parent = uf:GetParent()
+    if parent and not (parent.IsForbidden and parent:IsForbidden()) then
+        CollectFrameTreeExtrasInto(parent, nameFS, extras, 0)
+    end
+
+    cachedExtras[uf] = extras
+    return extras
+end
+
+local function ApplyExtrasVisibility(uf, nameFS, visible)
+    local extras = GetOrBuildExtras(uf, nameFS)
+    for i = 1, #extras do
+        local entry = extras[i]
+        local widget = entry.widget
+        if entry.isFontString then
+            if not visible then
+                HideWidgetForHeadline(widget)
+                if widget.SetAlpha then
+                    pcall(widget.SetAlpha, widget, 0)
+                end
+            elseif hiddenByFNC[widget] then
+                RestoreWidgetFromHeadline(widget)
+                if widget.SetAlpha then
+                    pcall(widget.SetAlpha, widget, 1)
+                end
+            end
+        else
+            if not visible then
+                HideWidgetForHeadline(widget)
+            else
+                RestoreWidgetFromHeadline(widget)
             end
         end
     end
@@ -240,20 +314,14 @@ local function SetHealthBarAndLevelVisible(uf, hb, nameFS, visible)
         RestoreWidgetFromHeadline(uf.classificationIndicator)
     end
 
-    local subFS = customSubtitles[uf]
-    ToggleFrameTreeExtras(uf, nameFS, subFS, visible, 0)
-
-    local parent = uf:GetParent()
-    if parent and not (parent.IsForbidden and parent:IsForbidden()) then
-        ToggleFrameTreeExtras(parent, nameFS, subFS, visible, 0)
-    end
+    ApplyExtrasVisibility(uf, nameFS, visible)
 end
 
 -- Create or update the custom NPC Title / Minion Owner subtitle FontString below the unit name
 local function ApplySubtitle(uf, nameFS, showSubtitle, subtitleText, color)
     local subFS = customSubtitles[uf]
     if not showSubtitle or not IsSafeString(subtitleText) then
-        if subFS then
+        if subFS and subFS:IsShown() then
             subFS:Hide()
         end
         return
@@ -277,7 +345,9 @@ local function ApplySubtitle(uf, nameFS, showSubtitle, subtitleText, color)
     else
         subFS:SetTextColor(1.0, 0.82, 0.0, 1)
     end
-    subFS:Show()
+    if not subFS:IsShown() then
+        subFS:Show()
+    end
 end
 
 -- Hook a FontString so Blizzard SetText / SetTextColor calls cannot overwrite our custom name color
@@ -290,7 +360,7 @@ local function EnsureNameFontStringHooked(uf, nameFS)
         if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
         local unit = uf.displayedUnit or uf.unit
         if IsSafeString(unit) and unit:match("^nameplate%d+$") then
-            FNC:UpdateUnitFrame(uf, unit)
+            ScheduleUnitFrameUpdate(uf, unit)
         end
     end
 
@@ -321,7 +391,7 @@ local function HookUnitFrame(uf)
             if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
             local unit = uf.displayedUnit or uf.unit
             if IsSafeString(unit) and unit:match("^nameplate%d+$") then
-                FNC:UpdateUnitFrame(uf, unit)
+                ScheduleUnitFrameUpdate(uf, unit)
             end
         end)
     end
@@ -333,7 +403,7 @@ local function HookUnitFrame(uf)
             if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
             local unit = uf.displayedUnit or uf.unit
             if IsSafeString(unit) and unit:match("^nameplate%d+$") then
-                FNC:UpdateUnitFrame(uf, unit)
+                ScheduleUnitFrameUpdate(uf, unit)
             end
         end)
     end
@@ -364,7 +434,7 @@ function FNC:ResetUnitFrame(uf)
         end
     end
 
-    if customSubtitles[uf] then
+    if customSubtitles[uf] and customSubtitles[uf]:IsShown() then
         customSubtitles[uf]:Hide()
     end
 
@@ -372,7 +442,7 @@ function FNC:ResetUnitFrame(uf)
 end
 
 -- Core UnitFrame styling routine
-function FNC:UpdateUnitFrame(uf, unit)
+function FNC:UpdateUnitFrameNow(uf, unit)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return end
     if uf._fncUpdating then return end
 
@@ -426,7 +496,7 @@ function FNC:UpdateUnitFrame(uf, unit)
 
     local activeSubCat = nil
     if matchedCfg.key == "FriendlyMinion" and matchedCat.subCategories then
-        local subKey = FNC.ResolveFriendlyMinionSubKey(unit)
+        local subKey = (FNC.ResolveFriendlyMinionSubKey and FNC.ResolveFriendlyMinionSubKey(unit) or nil)
         if subKey and matchedCat.subCategories[subKey] and matchedCat.subCategories[subKey].enabled then
             activeSubCat = matchedCat.subCategories[subKey]
             activeStyle = activeSubCat
@@ -510,7 +580,7 @@ function FNC:UpdateUnitFrame(uf, unit)
     local hasSubtitleCapable = matchedCfg.hasSubtitleOption or (matchedCfg.key == "ActiveQuestUnit" and (not canAttack))
     if nameFS and hasSubtitleCapable then
         if subtitleEnabled then
-            local subText = FNC:GetNPCSubtitle(unit)
+            local subText = (FNC.GetNPCSubtitle and FNC:GetNPCSubtitle(unit) or nil)
             local subColor = activeStyle.colorSubtitle
             if matchedCfg.key == "ActiveQuestUnit" then
                 subColor = (matchedCat.nameEnabled and matchedCat.colorName)
@@ -528,12 +598,16 @@ function FNC:UpdateUnitFrame(uf, unit)
     uf._fncUpdating = false
 end
 
+function FNC:UpdateUnitFrame(uf, unit)
+    self:UpdateUnitFrameNow(uf, unit)
+end
+
 local function OnCompactUnitFrameHook(uf)
     if not uf or uf._fncUpdating or (uf.IsForbidden and uf:IsForbidden()) then return end
     local unit = uf.displayedUnit or uf.unit
     if IsSafeString(unit) and unit:match("^nameplate%d+$") then
         HookUnitFrame(uf)
-        FNC:UpdateUnitFrame(uf, unit)
+        ScheduleUnitFrameUpdate(uf, unit)
     end
 end
 
@@ -553,22 +627,22 @@ if CompactUnitFrame_UpdateSelectionHighlight then
     hooksecurefunc("CompactUnitFrame_UpdateSelectionHighlight", OnCompactUnitFrameHook)
 end
 
--- Refresh or reset all active nameplates on screen
+-- Refresh or reset all active nameplates on screen in a single pass
 function FNC:RefreshAllPlates()
     if FNC.SyncAllCVars then
         FNC:SyncAllCVars()
     end
+    FNC.updatePassGeneration = (FNC.updatePassGeneration or 0) + 1
     if not C_NamePlate or not C_NamePlate.GetNamePlates then return end
     for _, plate in ipairs(C_NamePlate.GetNamePlates()) do
         local uf = plate.UnitFrame or plate.unitFrame
         if uf and not uf:IsForbidden() then
             HookUnitFrame(uf)
-            self:ResetUnitFrame(uf)
-            if CompactUnitFrame_UpdateHealthColor then pcall(CompactUnitFrame_UpdateHealthColor, uf) end
-            if CompactUnitFrame_UpdateName then pcall(CompactUnitFrame_UpdateName, uf) end
             local unit = uf.displayedUnit or uf.unit
             if IsSafeString(unit) then
-                self:UpdateUnitFrame(uf, unit)
+                self:UpdateUnitFrameNow(uf, unit)
+            else
+                self:ResetUnitFrame(uf)
             end
         end
     end
