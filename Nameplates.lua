@@ -30,6 +30,59 @@ local function SafeSetShown(widget, visible)
     end
 end
 
+local function GetCVarBoolSafe(cvarName)
+    if type(cvarName) ~= "string" then return false end
+    if C_CVar and C_CVar.GetCVarBool then
+        local ok, val = pcall(C_CVar.GetCVarBool, cvarName)
+        if ok and type(val) == "boolean" then return val end
+    end
+    if GetCVarBool then
+        local ok, val = pcall(GetCVarBool, cvarName)
+        if ok and type(val) == "boolean" then return val end
+    end
+    local raw = nil
+    if C_CVar and C_CVar.GetCVar then
+        local ok, val = pcall(C_CVar.GetCVar, cvarName)
+        if ok and not (issecretvalue and issecretvalue(val)) then raw = val end
+    elseif GetCVar then
+        local ok, val = pcall(GetCVar, cvarName)
+        if ok and not (issecretvalue and issecretvalue(val)) then raw = val end
+    end
+    return tostring(raw or "0") == "1"
+end
+
+-- Resolve Blizzard class color for player units when Blizzard's class color setting is active
+local function GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
+    if not IsSafeString(unit) or not UnitIsPlayer or not UnitIsPlayer(unit) then
+        return nil
+    end
+
+    local classColorEnabled = GetCVarBoolSafe("ShowClassColorInNameplate")
+        or ((not isEnemy and not canAttack) and GetCVarBoolSafe("ShowClassColorInFriendlyNameplate"))
+        or ((isEnemy or canAttack) and GetCVarBoolSafe("ShowClassColorInEnemyNameplate"))
+
+    if not classColorEnabled then
+        return nil
+    end
+
+    local _, classFile = UnitClass(unit)
+    if not IsSafeString(classFile) then return nil end
+
+    if C_ClassColor and C_ClassColor.GetClassColor then
+        local ok, col = pcall(C_ClassColor.GetClassColor, classFile)
+        if ok and col and IsSafeNumber(col.r) and IsSafeNumber(col.g) and IsSafeNumber(col.b) then
+            return col.r, col.g, col.b
+        end
+    end
+
+    local tbl = RAID_CLASS_COLORS and RAID_CLASS_COLORS[classFile]
+    if tbl and IsSafeNumber(tbl.r) and IsSafeNumber(tbl.g) and IsSafeNumber(tbl.b) then
+        return tbl.r, tbl.g, tbl.b
+    end
+
+    return nil
+end
+
 -- Locate the primary name FontString on a Classic Era UnitFrame
 local function GetUnitFrameNameText(uf)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return nil end
@@ -254,9 +307,17 @@ function FNC:ResetUnitFrame(uf)
     SetHealthBarAndLevelVisible(uf, hb, nameFS, true)
 
     if nameFS then
-        local orig = defaultNameColors[nameFS]
-        if orig then
-            nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+        local unit = uf.displayedUnit or uf.unit
+        local isEnemy = IsSafeString(unit) and UnitIsEnemy("player", unit) or false
+        local canAttack = IsSafeString(unit) and UnitCanAttack("player", unit) or false
+        local cr, cg, cb = GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
+        if cr and cg and cb then
+            nameFS:SetTextColor(cr, cg, cb, 1)
+        else
+            local orig = defaultNameColors[nameFS]
+            if orig then
+                nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+            end
         end
     end
 
@@ -333,7 +394,9 @@ function FNC:UpdateUnitFrame(uf, unit)
 
     if nameFS and not defaultNameColors[nameFS] then
         local r, g, b, a = nameFS:GetTextColor()
-        if IsSafeNumber(r) and IsSafeNumber(g) and IsSafeNumber(b) then
+        local isPureWhite = IsSafeNumber(r) and IsSafeNumber(g) and IsSafeNumber(b)
+            and math.abs(r - 1) < 0.001 and math.abs(g - 1) < 0.001 and math.abs(b - 1) < 0.001
+        if IsSafeNumber(r) and IsSafeNumber(g) and IsSafeNumber(b) and not isPureWhite then
             defaultNameColors[nameFS] = { r = r, g = g, b = b, a = IsSafeNumber(a) and a or 1 }
         end
     end
@@ -374,9 +437,14 @@ function FNC:UpdateUnitFrame(uf, unit)
             local c = activeStyle.colorName
             nameFS:SetTextColor(c.r, c.g, c.b, 1)
         else
-            local orig = defaultNameColors[nameFS]
-            if orig then
-                nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+            local cr, cg, cb = GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
+            if cr and cg and cb then
+                nameFS:SetTextColor(cr, cg, cb, 1)
+            else
+                local orig = defaultNameColors[nameFS]
+                if orig then
+                    nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+                end
             end
         end
     end
@@ -460,3 +528,4 @@ function FNC:ResetAllPlates()
         end
     end
 end
+

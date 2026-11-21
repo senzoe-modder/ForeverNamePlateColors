@@ -2,6 +2,12 @@
 
 ***
 
+# v1.4.7
+* fixed turning off faction member not showing class colors
+* think I fixed quest npcs
+
+***
+
 # v1.4.6
 * fixed default colors and small annoying bugs for me
 
