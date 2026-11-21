@@ -10,6 +10,32 @@ local hookedFrames = setmetatable({}, { __mode = "k" })
 local hookedWidgets = setmetatable({}, { __mode = "k" })
 local defaultNameColors = setmetatable({}, { __mode = "k" })
 local customSubtitles = setmetatable({}, { __mode = "k" })
+local hiddenByFNC = setmetatable({}, { __mode = "k" })
+local customNameApplied = setmetatable({}, { __mode = "k" })
+
+local function SafeSetShown(widget, visible)
+    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
+    if widget.SetShown then
+        pcall(widget.SetShown, widget, visible and true or false)
+    end
+end
+
+
+local function HideWidgetForHeadline(widget)
+    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
+    if widget.IsShown and widget:IsShown() then
+        hiddenByFNC[widget] = true
+    end
+    SafeSetShown(widget, false)
+end
+
+local function RestoreWidgetFromHeadline(widget)
+    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
+    if hiddenByFNC[widget] then
+        hiddenByFNC[widget] = nil
+        SafeSetShown(widget, true)
+    end
+end
 
 local function IsSafeString(val)
     if issecretvalue and issecretvalue(val) then return false end
@@ -21,13 +47,6 @@ local function IsSafeNumber(val)
     if issecretvalue and issecretvalue(val) then return false end
     if type(val) ~= "number" then return false end
     return true
-end
-
-local function SafeSetShown(widget, visible)
-    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
-    if widget.SetShown then
-        pcall(widget.SetShown, widget, visible and true or false)
-    end
 end
 
 local function GetCVarBoolSafe(cvarName)
@@ -142,18 +161,29 @@ local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
             local region = select(i, frame:GetRegions())
             if region and region ~= nameFS and region ~= subFS then
                 if region:IsObjectType("FontString") then
-                    SafeSetShown(region, visible)
-                    if region.SetAlpha then
-                        pcall(region.SetAlpha, region, visible and 1 or 0)
+                    if not visible then
+                        HideWidgetForHeadline(region)
+                        if region.SetAlpha then
+                            pcall(region.SetAlpha, region, 0)
+                        end
+                    elseif hiddenByFNC[region] then
+                        RestoreWidgetFromHeadline(region)
+                        if region.SetAlpha then
+                            pcall(region.SetAlpha, region, 1)
+                        end
                     end
-                elseif not visible then
+                else
                     local parentKey = region.GetParentKey and region:GetParentKey()
                     local regName = region.GetName and region:GetName()
                     local keyLower = IsSafeString(parentKey) and parentKey:lower() or ""
                     local nameLower = IsSafeString(regName) and regName:lower() or ""
                     if keyLower:find("level") or keyLower:find("health") or keyLower:find("border")
                         or nameLower:find("level") or nameLower:find("health") or nameLower:find("border") then
-                        SafeSetShown(region, false)
+                        if not visible then
+                            HideWidgetForHeadline(region)
+                        else
+                            RestoreWidgetFromHeadline(region)
+                        end
                     end
                 end
             end
@@ -176,7 +206,11 @@ local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
 
                 if not isCastOrPower and (keyLower:find("health") or keyLower:find("level")
                     or nameLower:find("health") or nameLower:find("level")) then
-                    SafeSetShown(child, visible)
+                    if not visible then
+                        HideWidgetForHeadline(child)
+                    else
+                        RestoreWidgetFromHeadline(child)
+                    end
                 end
 
                 if not isCastOrPower then
@@ -190,12 +224,21 @@ end
 local function SetHealthBarAndLevelVisible(uf, hb, nameFS, visible)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return end
 
-    SafeSetShown(uf.HealthBarsContainer, visible)
-    SafeSetShown(hb, visible)
-    SafeSetShown(uf.level, visible)
-    SafeSetShown(uf.LevelFrame, visible)
-    SafeSetShown(uf.highLevelTexture, visible)
-    SafeSetShown(uf.classificationIndicator, visible)
+    if not visible then
+        HideWidgetForHeadline(uf.HealthBarsContainer)
+        HideWidgetForHeadline(hb)
+        HideWidgetForHeadline(uf.level)
+        HideWidgetForHeadline(uf.LevelFrame)
+        HideWidgetForHeadline(uf.highLevelTexture)
+        HideWidgetForHeadline(uf.classificationIndicator)
+    else
+        SafeSetShown(uf.HealthBarsContainer, true)
+        SafeSetShown(hb, true)
+        RestoreWidgetFromHeadline(uf.level)
+        RestoreWidgetFromHeadline(uf.LevelFrame)
+        RestoreWidgetFromHeadline(uf.highLevelTexture)
+        RestoreWidgetFromHeadline(uf.classificationIndicator)
+    end
 
     local subFS = customSubtitles[uf]
     ToggleFrameTreeExtras(uf, nameFS, subFS, visible, 0)
@@ -381,10 +424,12 @@ function FNC:UpdateUnitFrame(uf, unit)
         subtitleEnabled = true
     end
 
+    local activeSubCat = nil
     if matchedCfg.key == "FriendlyMinion" and matchedCat.subCategories then
         local subKey = FNC.ResolveFriendlyMinionSubKey(unit)
         if subKey and matchedCat.subCategories[subKey] and matchedCat.subCategories[subKey].enabled then
-            activeStyle = matchedCat.subCategories[subKey]
+            activeSubCat = matchedCat.subCategories[subKey]
+            activeStyle = activeSubCat
             subtitleEnabled = subtitleEnabled and (activeStyle.subtitleEnabled ~= false)
         end
     end
@@ -433,18 +478,30 @@ function FNC:UpdateUnitFrame(uf, unit)
             end
         end
 
-        if activeStyle.nameEnabled and activeStyle.colorName then
-            local c = activeStyle.colorName
-            nameFS:SetTextColor(c.r, c.g, c.b, 1)
+        local resolvedNameColor = nil
+        if activeSubCat and activeSubCat.nameEnabled and activeSubCat.colorName then
+            resolvedNameColor = activeSubCat.colorName
+        elseif matchedCat.nameEnabled and matchedCat.colorName then
+            resolvedNameColor = matchedCat.colorName
+        elseif matchedCfg.key == "FriendlyMinion" and matchedCfg.defaultName then
+            resolvedNameColor = matchedCfg.defaultName
+        end
+
+        if resolvedNameColor then
+            nameFS:SetTextColor(resolvedNameColor.r, resolvedNameColor.g, resolvedNameColor.b, 1)
+            customNameApplied[nameFS] = true
         else
             local cr, cg, cb = GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
             if cr and cg and cb then
                 nameFS:SetTextColor(cr, cg, cb, 1)
+                customNameApplied[nameFS] = true
             else
-                local orig = defaultNameColors[nameFS]
-                if orig then
-                    nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+                if customNameApplied[nameFS] and CompactUnitFrame_UpdateName and not uf._fncUpdatingBlizzardName then
+                    uf._fncUpdatingBlizzardName = true
+                    pcall(CompactUnitFrame_UpdateName, uf)
+                    uf._fncUpdatingBlizzardName = false
                 end
+                customNameApplied[nameFS] = nil
             end
         end
     end
@@ -528,4 +585,3 @@ function FNC:ResetAllPlates()
         end
     end
 end
-

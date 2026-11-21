@@ -2,6 +2,13 @@
 
 ***
 
+# v1.4.8
+* Fixed bug with level numbers' (next to health bar) border and background disappearing (displaying floating level number instead)
+* Fixed bug with Friendly minion name color inheritence (when toggling advanced settings on or off)
+* Fixed bug with forcing class colors for friendly player names (if name color was disabled)
+
+***
+
 # v1.4.7
 * fixed turning off faction member not showing class colors
 * think I fixed quest npcs
