@@ -163,7 +163,7 @@ local function CreateSubCategoryRow(parent, parentCfg, subCfg, yOffset)
     local subtitleBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
     subtitleBtn:SetSize(100, 18)
     subtitleBtn:SetPoint("LEFT", subtitleCB, "RIGHT", 1, 0)
-    subtitleBtn:SetText("Tag Color")
+    subtitleBtn:SetText(subCfg.subtitleButtonLabel or "Tag Color")
     local subtitleSwatch = subtitleBtn:CreateTexture(nil, "OVERLAY")
     subtitleSwatch:SetSize(12, 12)
     subtitleSwatch:SetPoint("RIGHT", subtitleBtn, "RIGHT", -5, 0)
@@ -248,11 +248,11 @@ local function CreateSubCategoryRow(parent, parentCfg, subCfg, yOffset)
             subCat.nameEnabled = true
             subCat.subtitleEnabled = true
             subCat.colorHealth = FNC.GetDefaultHealth and FNC.GetDefaultHealth(subCfg) or { r = 1, g = 1, b = 1 }
-            subCat.colorName = { r = subCfg.defaultName.r, g = subCfg.defaultName.g, b = subCfg.defaultName.b }
+            subCat.colorName = FNC.GetDefaultName and FNC.GetDefaultName(subCfg) or { r = subCfg.defaultName.r, g = subCfg.defaultName.g, b = subCfg.defaultName.b }
             subCat.colorSubtitle = FNC.GetDefaultSubtitle and FNC.GetDefaultSubtitle(subCfg) or { r = 1, g = 0.82, b = 0 }
             FNC:UpdateConfigPanelUI()
             if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
-            print(string.format("|cFF00FFCCForeverNamePlateColors|r Reset %s to defaults.", subCfg.label))
+            print(FNC.FormatChat(string.format("Reset %s to defaults.", subCfg.label)))
         end
     end)
 
@@ -492,11 +492,11 @@ local function CreateCategoryCard(parent, rawCfg)
                 end
             end
             if cfg.hasSubtitleOption then
-                cat.showSubtitle = true
+                cat.showSubtitle = (cfg.defaultShowSubtitle ~= nil) and cfg.defaultShowSubtitle or true
                 cat.colorSubtitle = FNC.GetDefaultSubtitle and FNC.GetDefaultSubtitle(cfg) or { r = 1, g = 0.82, b = 0 }
             end
             cat.colorHealth = FNC.GetDefaultHealth and FNC.GetDefaultHealth(cfg) or { r = 1, g = 1, b = 1 }
-            cat.colorName = { r = cfg.defaultName.r, g = cfg.defaultName.g, b = cfg.defaultName.b }
+            cat.colorName = FNC.GetDefaultName and FNC.GetDefaultName(cfg) or { r = cfg.defaultName.r, g = cfg.defaultName.g, b = cfg.defaultName.b }
 
             if cfg.subCategories and cat.subCategories then
                 for _, subCfg in ipairs(cfg.subCategories) do
@@ -507,7 +507,7 @@ local function CreateCategoryCard(parent, rawCfg)
                         subCat.nameEnabled = true
                         subCat.subtitleEnabled = true
                         subCat.colorHealth = FNC.GetDefaultHealth and FNC.GetDefaultHealth(subCfg) or { r = 1, g = 1, b = 1 }
-                        subCat.colorName = { r = subCfg.defaultName.r, g = subCfg.defaultName.g, b = subCfg.defaultName.b }
+                        subCat.colorName = FNC.GetDefaultName and FNC.GetDefaultName(subCfg) or { r = subCfg.defaultName.r, g = subCfg.defaultName.g, b = subCfg.defaultName.b }
                         subCat.colorSubtitle = FNC.GetDefaultSubtitle and FNC.GetDefaultSubtitle(subCfg) or { r = 1, g = 0.82, b = 0 }
                     end
                 end
@@ -516,7 +516,7 @@ local function CreateCategoryCard(parent, rawCfg)
             if FNC.SyncAllCVars then FNC:SyncAllCVars() end
             FNC:UpdateConfigPanelUI()
             if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
-            print(string.format("|cFF00FFCCForeverNamePlateColors|r Reset %s to defaults.", cfg.label))
+            print(FNC.FormatChat(string.format("Reset %s to defaults.", cfg.label)))
         end
     end)
 
@@ -623,7 +623,7 @@ local function BuildConfigPanelUI()
         end
         FNC:UpdateConfigPanelUI()
         if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
-        print("|cFF00FFCCForeverNamePlateColors|r All name colors matched to their health colors.")
+        print(FNC.FormatChat("All name colors matched to their health colors."))
     end)
 
     enableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
@@ -643,7 +643,7 @@ local function BuildConfigPanelUI()
         if FNC.SyncAllCVars then FNC:SyncAllCVars() end
         FNC:UpdateConfigPanelUI()
         if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
-        print("|cFF00FFCCForeverNamePlateColors|r All categories enabled.")
+        print(FNC.FormatChat("All categories enabled."))
     end)
 
     disableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
@@ -668,7 +668,7 @@ local function BuildConfigPanelUI()
         if FNC.SyncAllCVars then FNC:SyncAllCVars() end
         FNC:UpdateConfigPanelUI()
         if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
-        print("|cFF00FFCCForeverNamePlateColors|r All categories disabled.")
+        print(FNC.FormatChat("All categories disabled."))
     end)
 
     local placedKeys = {}
