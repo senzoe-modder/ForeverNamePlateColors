@@ -10,6 +10,31 @@ local hookedFrames = setmetatable({}, { __mode = "k" })
 local hookedWidgets = setmetatable({}, { __mode = "k" })
 local defaultNameColors = setmetatable({}, { __mode = "k" })
 local customSubtitles = setmetatable({}, { __mode = "k" })
+local hiddenByFNC = setmetatable({}, { __mode = "k" })
+
+local function SafeSetShown(widget, visible)
+    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
+    if widget.SetShown then
+        pcall(widget.SetShown, widget, visible and true or false)
+    end
+end
+
+
+local function HideWidgetForHeadline(widget)
+    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
+    if widget.IsShown and widget:IsShown() then
+        hiddenByFNC[widget] = true
+    end
+    SafeSetShown(widget, false)
+end
+
+local function RestoreWidgetFromHeadline(widget)
+    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
+    if hiddenByFNC[widget] then
+        hiddenByFNC[widget] = nil
+        SafeSetShown(widget, true)
+    end
+end
 
 local function IsSafeString(val)
     if issecretvalue and issecretvalue(val) then return false end
@@ -21,13 +46,6 @@ local function IsSafeNumber(val)
     if issecretvalue and issecretvalue(val) then return false end
     if type(val) ~= "number" then return false end
     return true
-end
-
-local function SafeSetShown(widget, visible)
-    if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
-    if widget.SetShown then
-        pcall(widget.SetShown, widget, visible and true or false)
-    end
 end
 
 local function GetCVarBoolSafe(cvarName)
@@ -142,18 +160,29 @@ local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
             local region = select(i, frame:GetRegions())
             if region and region ~= nameFS and region ~= subFS then
                 if region:IsObjectType("FontString") then
-                    SafeSetShown(region, visible)
-                    if region.SetAlpha then
-                        pcall(region.SetAlpha, region, visible and 1 or 0)
+                    if not visible then
+                        HideWidgetForHeadline(region)
+                        if region.SetAlpha then
+                            pcall(region.SetAlpha, region, 0)
+                        end
+                    elseif hiddenByFNC[region] then
+                        RestoreWidgetFromHeadline(region)
+                        if region.SetAlpha then
+                            pcall(region.SetAlpha, region, 1)
+                        end
                     end
-                elseif not visible then
+                else
                     local parentKey = region.GetParentKey and region:GetParentKey()
                     local regName = region.GetName and region:GetName()
                     local keyLower = IsSafeString(parentKey) and parentKey:lower() or ""
                     local nameLower = IsSafeString(regName) and regName:lower() or ""
                     if keyLower:find("level") or keyLower:find("health") or keyLower:find("border")
                         or nameLower:find("level") or nameLower:find("health") or nameLower:find("border") then
-                        SafeSetShown(region, false)
+                        if not visible then
+                            HideWidgetForHeadline(region)
+                        else
+                            RestoreWidgetFromHeadline(region)
+                        end
                     end
                 end
             end
@@ -176,7 +205,11 @@ local function ToggleFrameTreeExtras(frame, nameFS, subFS, visible, depth)
 
                 if not isCastOrPower and (keyLower:find("health") or keyLower:find("level")
                     or nameLower:find("health") or nameLower:find("level")) then
-                    SafeSetShown(child, visible)
+                    if not visible then
+                        HideWidgetForHeadline(child)
+                    else
+                        RestoreWidgetFromHeadline(child)
+                    end
                 end
 
                 if not isCastOrPower then
@@ -190,12 +223,21 @@ end
 local function SetHealthBarAndLevelVisible(uf, hb, nameFS, visible)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return end
 
-    SafeSetShown(uf.HealthBarsContainer, visible)
-    SafeSetShown(hb, visible)
-    SafeSetShown(uf.level, visible)
-    SafeSetShown(uf.LevelFrame, visible)
-    SafeSetShown(uf.highLevelTexture, visible)
-    SafeSetShown(uf.classificationIndicator, visible)
+    if not visible then
+        HideWidgetForHeadline(uf.HealthBarsContainer)
+        HideWidgetForHeadline(hb)
+        HideWidgetForHeadline(uf.level)
+        HideWidgetForHeadline(uf.LevelFrame)
+        HideWidgetForHeadline(uf.highLevelTexture)
+        HideWidgetForHeadline(uf.classificationIndicator)
+    else
+        SafeSetShown(uf.HealthBarsContainer, true)
+        SafeSetShown(hb, true)
+        RestoreWidgetFromHeadline(uf.level)
+        RestoreWidgetFromHeadline(uf.LevelFrame)
+        RestoreWidgetFromHeadline(uf.highLevelTexture)
+        RestoreWidgetFromHeadline(uf.classificationIndicator)
+    end
 
     local subFS = customSubtitles[uf]
     ToggleFrameTreeExtras(uf, nameFS, subFS, visible, 0)
@@ -528,4 +570,3 @@ function FNC:ResetAllPlates()
         end
     end
 end
-

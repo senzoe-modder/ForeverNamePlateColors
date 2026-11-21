@@ -2,6 +2,11 @@
 
 ***
 
+# v1.4.8
+* Fixed bug with level numbers' (next to health bar) border and background disappearing (displaying floating level number instead)
+
+***
+
 # v1.4.7
 * fixed turning off faction member not showing class colors
 * think I fixed quest npcs
