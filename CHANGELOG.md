@@ -2,6 +2,11 @@
 
 ***
 
+# v1.4.5
+* Forgot to update .toc
+
+***
+
 # v1.4.4
 * Added "Show Errors in chat" button in settings (more for me)
 * Fixed visual bug in settings page
