@@ -2,6 +2,11 @@
 
 ***
 
+# v1.4.6
+* fixed default colors and small annoying bugs for me
+
+***
+
 # v1.4.5
 * Forgot to update .toc
 

@@ -39,12 +39,48 @@ end
 
 FNC.RAINBOW_TITLE = BuildRainbowTitle("ForeverNamePlateColors")
 
+function FNC.GetChatTitle()
+    return FNC.RAINBOW_TITLE or "|cFF00FFCCForeverNamePlateColors|r"
+end
+
+function FNC.FormatChat(msg)
+    return FNC.GetChatTitle() .. " " .. tostring(msg or "")
+end
+
+function FNC.GetDefaultHealth(cfg)
+    local dh = (type(cfg) == "table" and type(cfg.defaultHealth) == "table")
+        and cfg.defaultHealth
+        or { r = 1, g = 1, b = 1 }
+    return { r = dh.r or 1, g = dh.g or 1, b = dh.b or 1 }
+end
+
+function FNC.GetDefaultName(cfg)
+    local dn = (type(cfg) == "table" and type(cfg.defaultName) == "table")
+        and cfg.defaultName
+        or { r = 1, g = 1, b = 1 }
+    return { r = dn.r or 1, g = dn.g or 1, b = dn.b or 1 }
+end
+
+function FNC.GetDefaultSubtitle(cfg)
+    local ds = (type(cfg) == "table" and type(cfg.defaultSubtitle) == "table")
+        and cfg.defaultSubtitle
+        or { r = 1, g = 0.82, b = 0 }
+    return { r = ds.r or 1, g = ds.g or 0.82, b = ds.b or 0 }
+end
+
 -- Maps category enabled states directly to the Blizzard CVars required to render those nameplates
 FNC.CATEGORY_CVAR_MAP = {
     NPC = { "nameplateShowFriendlyNPCs" },
     FriendlyMinion = { "nameplateShowFriendlyPets", "nameplateShowFriendlyMinions" },
     HostileMinion = { "nameplateShowEnemyPets", "nameplateShowEnemyMinions" },
 }
+
+-- Shared default colors for requested changes
+local WHITE = { r = 1.0, g = 1.0, b = 1.0 }
+local RED   = { r = 1.0, g = 0.0, b = 0.0 }
+local GREEN = { r = 0.2, g = 0.9, b = 0.2 }
+local FACTION_HEALTH = { r = 0.396, g = 0.369, b = 1.0 }
+local NEUTRAL_HEALTH = { r = 1.0, g = 0.5, b = 0.0 }
 
 -- Ordered Unit Categories (evaluated top-to-bottom; first match wins)
 FNC.CATEGORY_CONFIG = {
@@ -54,7 +90,7 @@ FNC.CATEGORY_CONFIG = {
         label = "Party (Subgroup)",
         hasHealthOption = true,
         defaultHealth = { r = 0.639, g = 0.643, b = 1.0 },
-        defaultName   = { r = 0.639, g = 0.643, b = 1.0 },
+        defaultName   = { r = WHITE.r, g = WHITE.g, b = WHITE.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer)
             return isUnitPlayer and isSubgroup
         end,
@@ -65,7 +101,7 @@ FNC.CATEGORY_CONFIG = {
         label = "Raid (Other Subgroups)",
         hasHealthOption = true,
         defaultHealth = { r = 0.396, g = 0.369, b = 1.0 },
-        defaultName   = { r = 0.396, g = 0.369, b = 1.0 },
+        defaultName   = { r = WHITE.r, g = WHITE.g, b = WHITE.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer)
             return isUnitPlayer and isRaidMember and not isSubgroup
         end,
@@ -75,8 +111,8 @@ FNC.CATEGORY_CONFIG = {
         key = "FactionMember",
         label = "Faction Member",
         hasHealthOption = true,
-        defaultHealth = { r = 0.396, g = 0.369, b = 1.0 },
-        defaultName   = { r = 0.396, g = 0.369, b = 1.0 },
+        defaultHealth = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+        defaultName   = { r = WHITE.r, g = WHITE.g, b = WHITE.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             return isUnitPlayer and not isEnemy and not canAttack
         end,
@@ -91,10 +127,11 @@ FNC.CATEGORY_CONFIG = {
         syncHealthBarWithEnabled = true,
         hasSubtitleOption = true,
         subtitleLabel = "Show Owner",
+        subtitleButtonLabel = "Tag Color",
         defaultShowSubtitle = false,
-        defaultHealth = { r = 0.45, g = 0.85, b = 0.45 },
-        defaultName   = { r = 0.45, g = 0.85, b = 0.45 },
-        defaultSubtitle = { r = 0.72, g = 0.92, b = 0.72 },
+        defaultHealth   = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+        defaultName     = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+        defaultSubtitle = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
         cvarSync = {
             "nameplateShowFriendlyPlayerMinions",
             "nameplateShowFriendlyPlayerPets",
@@ -112,25 +149,25 @@ FNC.CATEGORY_CONFIG = {
                 key = "PersonalMinion",
                 label = "Personal Minions / Pets",
                 defaultEnabled = false,
-                defaultHealth = { r = 0.25, g = 0.95, b = 0.85 },
-                defaultName   = { r = 0.25, g = 0.95, b = 0.85 },
-                defaultSubtitle = { r = 0.65, g = 0.98, b = 0.92 },
+                defaultHealth   = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+                defaultName     = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+                defaultSubtitle = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
             },
             {
                 key = "PartyMinion",
                 label = "Party Minions / Pets (Subgroup)",
                 defaultEnabled = false,
-                defaultHealth = { r = 0.639, g = 0.643, b = 1.0 },
-                defaultName   = { r = 0.639, g = 0.643, b = 1.0 },
-                defaultSubtitle = { r = 0.80, g = 0.82, b = 1.0 },
+                defaultHealth   = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+                defaultName     = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+                defaultSubtitle = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
             },
             {
                 key = "RaidMinion",
                 label = "Raid Minions / Pets (Other Subgroups)",
                 defaultEnabled = false,
-                defaultHealth = { r = 0.396, g = 0.369, b = 1.0 },
-                defaultName   = { r = 0.396, g = 0.369, b = 1.0 },
-                defaultSubtitle = { r = 0.70, g = 0.72, b = 1.0 },
+                defaultHealth   = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+                defaultName     = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
+                defaultSubtitle = { r = FACTION_HEALTH.r, g = FACTION_HEALTH.g, b = FACTION_HEALTH.b },
             },
         },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
@@ -164,10 +201,11 @@ FNC.CATEGORY_CONFIG = {
         defaultShowHealthBar = false,
         hasSubtitleOption = true,
         subtitleLabel = "Show Title",
+        subtitleButtonLabel = "Job Title",
         defaultShowSubtitle = false,
-        defaultHealth = { r = 0.2, g = 0.9, b = 0.2 },
-        defaultName   = { r = 0.2, g = 0.9, b = 0.2 },
-        defaultSubtitle = { r = 1.0, g = 0.82, b = 0.0 },
+        defaultHealth   = { r = 0.2, g = 0.9, b = 0.2 },
+        defaultName     = { r = 0.2, g = 0.9, b = 0.2 },
+        defaultSubtitle = { r = GREEN.r, g = GREEN.g, b = GREEN.b },
         cvarSync = { "nameplateShowFriendlyNPCs" },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             if isUnitPlayer or isEnemy or canAttack then return false end
@@ -180,8 +218,8 @@ FNC.CATEGORY_CONFIG = {
         key = "NeutralMob",
         label = "Neutral Mob",
         hasHealthOption = true,
-        defaultHealth = { r = 1.0, g = 0.82, b = 0.0 },
-        defaultName   = { r = 1.0, g = 0.82, b = 0.0 },
+        defaultHealth = { r = NEUTRAL_HEALTH.r, g = NEUTRAL_HEALTH.g, b = NEUTRAL_HEALTH.b },
+        defaultName   = { r = WHITE.r, g = WHITE.g, b = WHITE.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
             if isUnitPlayer or isEnemy or not canAttack then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
@@ -201,8 +239,8 @@ FNC.CATEGORY_CONFIG = {
         key = "HostileFaction",
         label = "Hostile Faction",
         hasHealthOption = true,
-        defaultHealth = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultName   = { r = 1.0, g = 0.0, b = 0.0 },
+        defaultHealth = { r = RED.r, g = RED.g, b = RED.b },
+        defaultName   = { r = RED.r, g = RED.g, b = RED.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             return isUnitPlayer and (isEnemy or canAttack)
         end,
@@ -217,10 +255,11 @@ FNC.CATEGORY_CONFIG = {
         syncHealthBarWithEnabled = true,
         hasSubtitleOption = true,
         subtitleLabel = "Show Owner",
+        subtitleButtonLabel = "Tag Color",
         defaultShowSubtitle = false,
-        defaultHealth = { r = 1.0, g = 0.35, b = 0.1 },
-        defaultName   = { r = 1.0, g = 0.35, b = 0.1 },
-        defaultSubtitle = { r = 1.0, g = 0.65, b = 0.45 },
+        defaultHealth   = { r = RED.r, g = RED.g, b = RED.b },
+        defaultName     = { r = RED.r, g = RED.g, b = RED.b },
+        defaultSubtitle = { r = RED.r, g = RED.g, b = RED.b },
         cvarSync = {
             "nameplateShowEnemyMinions",
             "nameplateShowEnemyPets",
@@ -242,7 +281,7 @@ FNC.CATEGORY_CONFIG = {
         defaultEnabled = false,
         hasHealthOption = true,
         defaultHealth = { r = 0.961, g = 0.106, b = 0.447 }, -- #f51b72
-        defaultName   = { r = 1.0,   g = 1.0,   b = 1.0 },   -- #ffffff
+        defaultName   = { r = WHITE.r, g = WHITE.g, b = WHITE.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             if isUnitPlayer or not canAttack then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
@@ -254,8 +293,8 @@ FNC.CATEGORY_CONFIG = {
         key = "EnemyMob",
         label = "Enemy Mob",
         hasHealthOption = true,
-        defaultHealth = { r = 1.0, g = 0.0, b = 0.0 },
-        defaultName   = { r = 1.0, g = 0.0, b = 0.0 },
+        defaultHealth = { r = RED.r, g = RED.g, b = RED.b },
+        defaultName   = { r = WHITE.r, g = WHITE.g, b = WHITE.b },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
             if isUnitPlayer or not (isEnemy or canAttack) then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end

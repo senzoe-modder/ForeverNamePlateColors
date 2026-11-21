@@ -9,7 +9,11 @@ local GetAddOnMetadata = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMet
 local addonVersion = (GetAddOnMetadata and GetAddOnMetadata(addonName, "Version")) or "dev"
 
 local function GetChatTitle()
-    return FNC.RAINBOW_TITLE or "|cFF00FFCCForeverNamePlateColors|r"
+    return FNC.GetChatTitle and FNC.GetChatTitle() or (FNC.RAINBOW_TITLE or "|cFF00FFCCForeverNamePlateColors|r")
+end
+
+local function FormatChat(msg)
+    return FNC.FormatChat and FNC.FormatChat(msg) or (GetChatTitle() .. " " .. tostring(msg or ""))
 end
 
 -- Error Tracker: Always logs FNC errors to SavedVariables on disk; prints to chat if enabled in settings
@@ -82,7 +86,7 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
         FNC:UpdateConfigPanelUI()
-        print(GetChatTitle() .. " v" .. addonVersion .. " loaded successfully. Type |cFFFFFFFF/fnc|r to open options.")
+        print(FormatChat("v" .. addonVersion .. " loaded successfully. Type |cFFFFFFFF/fnc|r to open options."))
     elseif event == "PLAYER_ENTERING_WORLD" then
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
@@ -120,7 +124,7 @@ SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
     msg = string.lower(strtrim(msg or ""))
     if msg == "toggle" then
         ForeverNamePlateColorsDB.enabled = not ForeverNamePlateColorsDB.enabled
-        print(GetChatTitle() .. " Enabled: " .. tostring(ForeverNamePlateColorsDB.enabled))
+        print(FormatChat("Enabled: " .. tostring(ForeverNamePlateColorsDB.enabled)))
         if ForeverNamePlateColorsDB.enabled then
             FNC:RefreshAllPlates()
         else
@@ -131,9 +135,9 @@ SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
     elseif msg == "errors" then
         local log = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.errorLog
         if not log or #log == 0 then
-            print(GetChatTitle() .. " No recorded errors.")
+            print(FormatChat("No recorded errors."))
         else
-            print(GetChatTitle() .. " Recorded errors (" .. #log .. "):")
+            print(FormatChat("Recorded errors (" .. #log .. "):"))
             for i, entry in ipairs(log) do
                 print("|cFFFF5555[" .. i .. "]|r " .. entry)
             end
@@ -142,7 +146,7 @@ SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
         if ForeverNamePlateColorsDB then
             ForeverNamePlateColorsDB.errorLog = {}
         end
-        print(GetChatTitle() .. " Error log cleared.")
+        print(FormatChat("Error log cleared."))
     else
         if Settings and Settings.OpenToCategory and FNC.settingsCategory then
             Settings.OpenToCategory(FNC.settingsCategory.ID)
