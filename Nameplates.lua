@@ -11,6 +11,7 @@ local hookedWidgets = setmetatable({}, { __mode = "k" })
 local defaultNameColors = setmetatable({}, { __mode = "k" })
 local customSubtitles = setmetatable({}, { __mode = "k" })
 local hiddenByFNC = setmetatable({}, { __mode = "k" })
+local customNameApplied = setmetatable({}, { __mode = "k" })
 
 local function SafeSetShown(widget, visible)
     if not widget or (widget.IsForbidden and widget:IsForbidden()) then return end
@@ -488,15 +489,19 @@ function FNC:UpdateUnitFrame(uf, unit)
 
         if resolvedNameColor then
             nameFS:SetTextColor(resolvedNameColor.r, resolvedNameColor.g, resolvedNameColor.b, 1)
+            customNameApplied[nameFS] = true
         else
             local cr, cg, cb = GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
             if cr and cg and cb then
                 nameFS:SetTextColor(cr, cg, cb, 1)
+                customNameApplied[nameFS] = true
             else
-                local orig = defaultNameColors[nameFS]
-                if orig then
-                    nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+                if customNameApplied[nameFS] and CompactUnitFrame_UpdateName and not uf._fncUpdatingBlizzardName then
+                    uf._fncUpdatingBlizzardName = true
+                    pcall(CompactUnitFrame_UpdateName, uf)
+                    uf._fncUpdatingBlizzardName = false
                 end
+                customNameApplied[nameFS] = nil
             end
         end
     end
