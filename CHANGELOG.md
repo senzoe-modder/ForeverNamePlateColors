@@ -2,6 +2,11 @@
 
 ***
 
+# v1.4.9
+* (BIG) Improvements to performance (especially in crowded cities)
+
+***
+
 # v1.4.8
 * Fixed bug with level numbers' (next to health bar) border and background disappearing (displaying floating level number instead)
 * Fixed bug with Friendly minion name color inheritence (when toggling advanced settings on or off)

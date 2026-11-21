@@ -58,7 +58,7 @@ local function QueueQuestRefresh()
     questRefreshQueued = true
     C_Timer.After(0, function()
         questRefreshQueued = false
-        FNC:RebuildQuestCache()
+        if FNC.RebuildQuestCache then FNC:RebuildQuestCache() end
         FNC:RefreshAllPlates()
     end)
 end
@@ -83,12 +83,12 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == addonName then
         FNC.MigrateDB(ForeverNamePlateColorsDB)
         FNC.EnsureDefaults(ForeverNamePlateColorsDB)
-        FNC:RebuildQuestCache()
+        if FNC.RebuildQuestCache then FNC:RebuildQuestCache() end
         FNC:SyncAllCVars()
         FNC:UpdateConfigPanelUI()
         print(FormatChat("v" .. addonVersion .. " loaded successfully. Type |cFFFFFFFF/fnc|r to open options."))
     elseif event == "PLAYER_ENTERING_WORLD" then
-        FNC:RebuildQuestCache()
+        if FNC.RebuildQuestCache then FNC:RebuildQuestCache() end
         FNC:SyncAllCVars()
         FNC:RefreshAllPlates()
     elseif event == "NAME_PLATE_UNIT_ADDED"
@@ -104,7 +104,11 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
             if plate then
                 local uf = plate.UnitFrame or plate.unitFrame
                 if uf and not uf:IsForbidden() then
-                    FNC:UpdateUnitFrame(uf, unit)
+                    if FNC.QueueUnitFrameUpdate then
+                        FNC:QueueUnitFrameUpdate(uf, unit)
+                    else
+                        FNC:UpdateUnitFrame(uf, unit)
+                    end
                 end
             end
         end
