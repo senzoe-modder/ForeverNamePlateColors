@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- Config.lua
--- Add-on Defaults, CVar Definitions, and Sectioned Category Registry
+-- Add-on Defaults, CVar Mappings, and Sectioned Category Registry
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
@@ -39,21 +39,11 @@ end
 
 FNC.RAINBOW_TITLE = BuildRainbowTitle("ForeverNamePlateColors")
 
--- Nameplate Visibility CVars (managed in Settings)
-FNC.VISIBILITY_CVARS = {
-    { cvar = "nameplateShowFriendlyNPCs",     label = "Friendly NPCs",     default = false },
-    { cvar = "nameplateShowFriendlyPets",     label = "Friendly Pets",     default = false },
-    { cvar = "nameplateShowFriendlyMinions",  label = "Friendly Minions",  default = false },
-    { cvar = "nameplateShowEnemyPets",        label = "Enemy Pets",        default = false },
-    { cvar = "nameplateShowEnemyMinions",     label = "Enemy Minions",     default = false },
-}
-
-FNC.CVAR_DEFAULTS = {
-    nameplateShowFriendlyNPCs    = false,
-    nameplateShowFriendlyPets    = false,
-    nameplateShowFriendlyMinions = false,
-    nameplateShowEnemyPets       = false,
-    nameplateShowEnemyMinions    = false,
+-- Maps category enabled states directly to the Blizzard CVars required to render those nameplates
+FNC.CATEGORY_CVAR_MAP = {
+    NPC = { "nameplateShowFriendlyNPCs" },
+    FriendlyMinion = { "nameplateShowFriendlyPets", "nameplateShowFriendlyMinions" },
+    HostileMinion = { "nameplateShowEnemyPets", "nameplateShowEnemyMinions" },
 }
 
 -- Ordered Unit Categories (evaluated top-to-bottom; first match wins)
@@ -97,13 +87,26 @@ FNC.CATEGORY_CONFIG = {
         label = "Friendly Minion",
         hasHealthOption = true,
         hasHealthBarOption = true,
-        defaultShowHealthBar = true,
+        defaultShowHealthBar = false,
+        syncHealthBarWithEnabled = true,
         hasSubtitleOption = true,
         subtitleLabel = "Show Owner",
         defaultShowSubtitle = false,
         defaultHealth = { r = 0.45, g = 0.85, b = 0.45 },
         defaultName   = { r = 0.45, g = 0.85, b = 0.45 },
         defaultSubtitle = { r = 0.72, g = 0.92, b = 0.72 },
+        cvarSync = {
+            "nameplateShowFriendlyPlayerMinions",
+            "nameplateShowFriendlyPlayerPets",
+            "nameplateShowFriendlyPlayerGuardians",
+            "nameplateShowFriendlyPlayerTotems",
+            "nameplateShowFriendlyMinions",
+            "nameplateShowFriendlyPets",
+        },
+        enableParentCVars = {
+            "nameplateShowFriendlyPlayers",
+            "nameplateShowFriends",
+        },
         subCategories = {
             {
                 key = "PersonalMinion",
@@ -136,6 +139,23 @@ FNC.CATEGORY_CONFIG = {
         end,
     },
     {
+        section = "Quests",
+        key = "ActiveQuestUnit",
+        label = "Quest NPC / Mob",
+        hasHealthOption = true,
+        defaultHealth = { r = 1.0, g = 0.85, b = 0.0 },
+        defaultName   = { r = 1.0, g = 0.85, b = 0.0 },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
+            if isUnitPlayer then return false end
+            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            local taggedCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["TaggedMob"]
+            if taggedCat and taggedCat.enabled and FNC:IsTaggedByPlayerOrParty(unit) then
+                return false
+            end
+            return FNC:IsActiveQuestUnit(unit, uf)
+        end,
+    },
+    {
         section = "Friendly",
         key = "NPC",
         label = "NPC",
@@ -148,13 +168,10 @@ FNC.CATEGORY_CONFIG = {
         defaultHealth = { r = 0.2, g = 0.9, b = 0.2 },
         defaultName   = { r = 0.2, g = 0.9, b = 0.2 },
         defaultSubtitle = { r = 1.0, g = 0.82, b = 0.0 },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
+        cvarSync = { "nameplateShowFriendlyNPCs" },
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             if isUnitPlayer or isEnemy or canAttack then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
-            local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
-            if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
-                return false
-            end
             return true
         end,
     },
@@ -168,6 +185,10 @@ FNC.CATEGORY_CONFIG = {
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
             if isUnitPlayer or isEnemy or not canAttack then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            local taggedCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["TaggedMob"]
+            if taggedCat and taggedCat.enabled and FNC:IsTaggedByPlayerOrParty(unit) then
+                return false
+            end
             local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
             if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
                 return false
@@ -191,15 +212,41 @@ FNC.CATEGORY_CONFIG = {
         key = "HostileMinion",
         label = "Hostile Minion",
         hasHealthOption = true,
+        hasHealthBarOption = true,
+        defaultShowHealthBar = false,
+        syncHealthBarWithEnabled = true,
         hasSubtitleOption = true,
         subtitleLabel = "Show Owner",
         defaultShowSubtitle = false,
         defaultHealth = { r = 1.0, g = 0.35, b = 0.1 },
         defaultName   = { r = 1.0, g = 0.35, b = 0.1 },
         defaultSubtitle = { r = 1.0, g = 0.65, b = 0.45 },
+        cvarSync = {
+            "nameplateShowEnemyMinions",
+            "nameplateShowEnemyPets",
+            "nameplateShowEnemyGuardians",
+            "nameplateShowEnemyTotems",
+        },
+        enableParentCVars = {
+            "nameplateShowEnemies",
+        },
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             return (not isUnitPlayer) and (isEnemy or canAttack)
                 and (UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)))
+        end,
+    },
+    {
+        section = "Hostile",
+        key = "TaggedMob",
+        label = "Tagged Mob (Player / Party)",
+        defaultEnabled = false,
+        hasHealthOption = true,
+        defaultHealth = { r = 0.961, g = 0.106, b = 0.447 }, -- #f51b72
+        defaultName   = { r = 1.0,   g = 1.0,   b = 1.0 },   -- #ffffff
+        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
+            if isUnitPlayer or not canAttack then return false end
+            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            return FNC:IsTaggedByPlayerOrParty(unit)
         end,
     },
     {
@@ -212,24 +259,15 @@ FNC.CATEGORY_CONFIG = {
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
             if isUnitPlayer or not (isEnemy or canAttack) then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
+            local taggedCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["TaggedMob"]
+            if taggedCat and taggedCat.enabled and FNC:IsTaggedByPlayerOrParty(unit) then
+                return false
+            end
             local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
             if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
                 return false
             end
             return true
-        end,
-    },
-    {
-        section = "Quests",
-        key = "ActiveQuestUnit",
-        label = "Quest NPC / Mob",
-        hasHealthOption = true,
-        defaultHealth = { r = 1.0, g = 0.85, b = 0.0 },
-        defaultName   = { r = 1.0, g = 0.85, b = 0.0 },
-        match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack, uf)
-            if isUnitPlayer then return false end
-            if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
-            return FNC:IsActiveQuestUnit(unit, uf)
         end,
     },
 }
