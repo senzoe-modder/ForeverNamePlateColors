@@ -8,7 +8,7 @@ local addonName, FNC = ...
 local DEFAULT_UI_GROUPS = {
     { key = "Friendly", label = "Friendly" },
     { key = "Neutral",  label = "Neutral" },
-    { key = "Enemy",    label = "Enemy" },
+    { key = "Hostile",  label = "Hostile" },
     { key = "Quests",   label = "Quests" },
 }
 
@@ -19,11 +19,20 @@ local function GetUIGroups()
     return DEFAULT_UI_GROUPS
 end
 
+local function GetCategoryGroupKey(cfg)
+    if type(cfg) ~= "table" then return "Friendly" end
+    local g = cfg.group or cfg.section or "Friendly"
+    if g == "Enemy" then
+        return "Hostile"
+    end
+    return g
+end
+
 local function NormalizeCfg(cfg)
     if type(cfg) ~= "table" then return nil end
     cfg.key = cfg.key or "CustomCategory"
     cfg.label = cfg.label or cfg.key
-    cfg.group = cfg.group or "Friendly"
+    cfg.group = GetCategoryGroupKey(cfg)
     if type(cfg.defaultName) ~= "table" then
         cfg.defaultName = { r = 1.0, g = 1.0, b = 1.0 }
     else
@@ -57,11 +66,14 @@ FNC.sectionHeaders = {}
 FNC.headersByGroup = {}
 
 local uiBuilt = false
-local scrollFrame, scrollChild, enableCB, matchBtn, enableAllBtn, disableAllBtn
+local scrollFrame, scrollChild, enableCB, showErrorsCB, matchBtn, enableAllBtn, disableAllBtn
 
 local function EnsureDBReady()
     if type(ForeverNamePlateColorsDB) ~= "table" then
         ForeverNamePlateColorsDB = {}
+    end
+    if ForeverNamePlateColorsDB.showErrors == nil then
+        ForeverNamePlateColorsDB.showErrors = false
     end
     if FNC.MigrateDB then
         FNC.MigrateDB(ForeverNamePlateColorsDB)
@@ -575,6 +587,16 @@ local function BuildConfigPanelUI()
         end
     end)
 
+    showErrorsCB = CreateFrame("CheckButton", nil, globalBox, "InterfaceOptionsCheckButtonTemplate")
+    showErrorsCB:SetPoint("LEFT", enableCB.Text, "RIGHT", 24, 0)
+    showErrorsCB.Text:SetText("Show Errors in Chat")
+    SetTooltip(showErrorsCB, "Print ForeverNamePlateColors runtime errors directly to chat in addition to saving them in the error log.")
+
+    showErrorsCB:SetScript("OnClick", function(self)
+        EnsureDBReady()
+        ForeverNamePlateColorsDB.showErrors = self:GetChecked() and true or false
+    end)
+
     matchBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
     matchBtn:SetSize(200, 22)
     matchBtn:SetPoint("BOTTOMLEFT", 10, 8)
@@ -739,6 +761,9 @@ function FNC:UpdateConfigPanelUI()
 
     local addonEnabled = ForeverNamePlateColorsDB and (ForeverNamePlateColorsDB.enabled ~= false)
     enableCB:SetChecked(addonEnabled)
+    if showErrorsCB then
+        showErrorsCB:SetChecked(ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.showErrors == true)
+    end
 
     matchBtn:SetEnabled(addonEnabled)
     matchBtn:SetAlpha(addonEnabled and 1.0 or 0.4)

@@ -2,6 +2,12 @@
 
 ***
 
+# v1.4.4
+* Added "Show Errors in chat" button in settings (more for me)
+* Fixed visual bug in settings page
+
+***
+
 # v1.4.3
 * Added Tagged mob nameplate customization
 * Fixed multiple bugs
