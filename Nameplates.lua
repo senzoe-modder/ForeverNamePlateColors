@@ -423,10 +423,12 @@ function FNC:UpdateUnitFrame(uf, unit)
         subtitleEnabled = true
     end
 
+    local activeSubCat = nil
     if matchedCfg.key == "FriendlyMinion" and matchedCat.subCategories then
         local subKey = FNC.ResolveFriendlyMinionSubKey(unit)
         if subKey and matchedCat.subCategories[subKey] and matchedCat.subCategories[subKey].enabled then
-            activeStyle = matchedCat.subCategories[subKey]
+            activeSubCat = matchedCat.subCategories[subKey]
+            activeStyle = activeSubCat
             subtitleEnabled = subtitleEnabled and (activeStyle.subtitleEnabled ~= false)
         end
     end
@@ -475,9 +477,17 @@ function FNC:UpdateUnitFrame(uf, unit)
             end
         end
 
-        if activeStyle.nameEnabled and activeStyle.colorName then
-            local c = activeStyle.colorName
-            nameFS:SetTextColor(c.r, c.g, c.b, 1)
+        local resolvedNameColor = nil
+        if activeSubCat and activeSubCat.nameEnabled and activeSubCat.colorName then
+            resolvedNameColor = activeSubCat.colorName
+        elseif matchedCat.nameEnabled and matchedCat.colorName then
+            resolvedNameColor = matchedCat.colorName
+        elseif matchedCfg.key == "FriendlyMinion" and matchedCfg.defaultName then
+            resolvedNameColor = matchedCfg.defaultName
+        end
+
+        if resolvedNameColor then
+            nameFS:SetTextColor(resolvedNameColor.r, resolvedNameColor.g, resolvedNameColor.b, 1)
         else
             local cr, cg, cb = GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
             if cr and cg and cb then
