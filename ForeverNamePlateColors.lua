@@ -5,6 +5,9 @@
 
 local addonName, FNC = ...
 
+local GetAddOnMetadata = (C_AddOns and C_AddOns.GetAddOnMetadata) or GetAddOnMetadata
+local addonVersion = (GetAddOnMetadata and GetAddOnMetadata(addonName, "Version")) or "dev"
+
 local function GetChatTitle()
     return FNC.RAINBOW_TITLE or "|cFF00FFCCForeverNamePlateColors|r"
 end
@@ -56,13 +59,16 @@ local function QueueQuestRefresh()
     end)
 end
 
--- Register Core, Group, and Quest Events
+-- Register Core, Group, Combat/Threat, and Quest Events
 mainFrame:RegisterEvent("ADDON_LOADED")
 mainFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
 mainFrame:RegisterEvent("NAME_PLATE_UNIT_ADDED")
 mainFrame:RegisterEvent("UNIT_NAME_UPDATE")
 mainFrame:RegisterEvent("UNIT_LEVEL")
 mainFrame:RegisterEvent("UNIT_FACTION")
+mainFrame:RegisterEvent("UNIT_FLAGS")
+mainFrame:RegisterEvent("UNIT_TARGET")
+mainFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
 mainFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
 mainFrame:RegisterEvent("QUEST_LOG_UPDATE")
 mainFrame:RegisterEvent("QUEST_ACCEPTED")
@@ -76,14 +82,20 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
         FNC:UpdateConfigPanelUI()
-        print(GetChatTitle() .. " v1.4.0 loaded successfully. Type |cFFFFFFFF/fnc|r to open options.")
+        print(GetChatTitle() .. " v" .. addonVersion .. " loaded successfully. Type |cFFFFFFFF/fnc|r to open options.")
     elseif event == "PLAYER_ENTERING_WORLD" then
         FNC:RebuildQuestCache()
         FNC:SyncAllCVars()
         FNC:RefreshAllPlates()
-    elseif event == "NAME_PLATE_UNIT_ADDED" or event == "UNIT_NAME_UPDATE" or event == "UNIT_LEVEL" or event == "UNIT_FACTION" then
+    elseif event == "NAME_PLATE_UNIT_ADDED"
+        or event == "UNIT_NAME_UPDATE"
+        or event == "UNIT_LEVEL"
+        or event == "UNIT_FACTION"
+        or event == "UNIT_FLAGS"
+        or event == "UNIT_TARGET"
+        or event == "UNIT_THREAT_LIST_UPDATE" then
         local unit = arg1
-        if unit then
+        if type(unit) == "string" and unit:match("^nameplate%d+$") then
             local plate = C_NamePlate.GetNamePlateForUnit(unit)
             if plate then
                 local uf = plate.UnitFrame or plate.unitFrame

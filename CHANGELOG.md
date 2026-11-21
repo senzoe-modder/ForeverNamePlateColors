@@ -1,4 +1,27 @@
-# Changelog v1.4.0
+# Changelog
+
+***
+
+# v1.4.3
+* Added Tagged mob nameplate customization
+* Fixed multiple bugs
+
+***
+
+# v1.4.2
+Missed incrementing ForeverNamePlateColors.toc, and missed changelog updates
+
+***
+
+# v1.4.1
+* **Error Visibility**
+  * Added `/fnc errors` and `/fnc clearerrors` to easily display and clear error log
+* **Added Rainbow Griadient to title**
+  * Added rainbow graident to the title (ForeverNamePlateColors) whenever it is displayed in chat (on load, toggle, errors)
+
+***
+
+# v1.4.0
 This is a big one!
 
 ### Added
@@ -28,17 +51,6 @@ This is a big one!
   * **Quests Section:** Groups Quest NPC's and Mobs in one
   * **Neutral Section:** Groups Quest NPC's and Mobs in one
   * Cleaner visual layout, per-category reset buttons, and smoother color customization.
-
-# v1.4.1
-* **Error Visibility**
-  * Added `/fnc errors` and `/fnc clearerrors` to easily display and clear error log
-* **Added Rainbow Griadient to title**
-  * Added rainbow graident to the title (ForeverNamePlateColors) whenever it is displayed in chat (on load, toggle, errors)
-
-***
-
-# v1.4.2
-Missed incrementing ForeverNamePlateColors.toc, and missed changelog updates
 
 ***
 

@@ -1,6 +1,6 @@
 --------------------------------------------------------------------------------
 -- Resolvers.lua
--- Subgroup Checks, Minion Owner Detection, Quest Log Cache, & Tooltip Scanner
+-- Subgroup Checks, Minion Owner Detection, Mob Tagging, Quest Cache, & Tooltip Scanner
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
@@ -13,6 +13,16 @@ local questTextCorpus = ""
 
 -- Reusable scratch table for tooltip lines (zero per-call table allocation)
 local tooltipLines = {}
+
+-- Preallocated unit token tables for zero-allocation threat/target lookups
+local PARTY_UNITS = { "party1", "party2", "party3", "party4" }
+local PARTY_PET_UNITS = { "partypet1", "partypet2", "partypet3", "partypet4" }
+local RAID_UNITS = {}
+local RAID_PET_UNITS = {}
+for i = 1, 40 do
+    RAID_UNITS[i] = "raid" .. i
+    RAID_PET_UNITS[i] = "raidpet" .. i
+end
 
 -- Blizzard Classic Era Quest Indicator Texture FileDataIDs
 local QUEST_TEXTURE_FILE_IDS = {
@@ -48,6 +58,97 @@ local function GetNpcIDFromUnit(unit)
         return tonumber(npcIDStr)
     end
     return nil
+end
+
+-- Zero-allocation check whether an attackable mob is tagged by the player or their party/raid
+local function CheckTaggedByPlayerOrPartyInternal(unit)
+    if not IsSafeString(unit) or UnitIsPlayer(unit) then return false end
+    if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then
+        return false
+    end
+    if not UnitCanAttack("player", unit) then
+        return false
+    end
+    if UnitIsDead and UnitIsDead(unit) then
+        return false
+    end
+
+    -- If another player/group outside our party holds the tag, UnitIsTapDenied is true
+    if UnitIsTapDenied and UnitIsTapDenied(unit) then
+        return false
+    end
+
+    local mobTarget = unit .. "target"
+    local hasMobTarget = UnitExists and UnitExists(mobTarget)
+
+    -- 1. Check player & personal pet threat or mob target
+    if UnitThreatSituation and UnitThreatSituation("player", unit) ~= nil then
+        return true
+    end
+    if hasMobTarget and UnitIsUnit(mobTarget, "player") then
+        return true
+    end
+    if UnitExists("pet") then
+        if UnitThreatSituation and UnitThreatSituation("pet", unit) ~= nil then
+            return true
+        end
+        if hasMobTarget and UnitIsUnit(mobTarget, "pet") then
+            return true
+        end
+    end
+
+    -- 2. Check party/raid members & their pets
+    if IsInRaid() then
+        local numMembers = GetNumGroupMembers()
+        for i = 1, numMembers do
+            local rUnit = RAID_UNITS[i]
+            if rUnit and UnitExists(rUnit) then
+                if UnitThreatSituation and UnitThreatSituation(rUnit, unit) ~= nil then
+                    return true
+                end
+                if hasMobTarget and UnitIsUnit(mobTarget, rUnit) then
+                    return true
+                end
+            end
+            local rPet = RAID_PET_UNITS[i]
+            if rPet and UnitExists(rPet) then
+                if UnitThreatSituation and UnitThreatSituation(rPet, unit) ~= nil then
+                    return true
+                end
+                if hasMobTarget and UnitIsUnit(mobTarget, rPet) then
+                    return true
+                end
+            end
+        end
+    elseif IsInGroup() then
+        for i = 1, 4 do
+            local pUnit = PARTY_UNITS[i]
+            if UnitExists(pUnit) then
+                if UnitThreatSituation and UnitThreatSituation(pUnit, unit) ~= nil then
+                    return true
+                end
+                if hasMobTarget and UnitIsUnit(mobTarget, pUnit) then
+                    return true
+                end
+            end
+            local pPet = PARTY_PET_UNITS[i]
+            if UnitExists(pPet) then
+                if UnitThreatSituation and UnitThreatSituation(pPet, unit) ~= nil then
+                    return true
+                end
+                if hasMobTarget and UnitIsUnit(mobTarget, pPet) then
+                    return true
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+function FNC:IsTaggedByPlayerOrParty(unit)
+    local ok, result = pcall(CheckTaggedByPlayerOrPartyInternal, unit)
+    return ok and result == true
 end
 
 local function AddTurnInNPC(rawTarget)
@@ -471,8 +572,8 @@ function FNC.ResolveFriendlyMinionSubKey(unit)
     if IsInRaid() then
         local numMembers = GetNumGroupMembers()
         for i = 1, numMembers do
-            local raidUnit = "raid" .. i
-            local raidPetUnit = "raidpet" .. i
+            local raidUnit = RAID_UNITS[i]
+            local raidPetUnit = RAID_PET_UNITS[i]
             local isMatch = (UnitExists(raidPetUnit) and UnitIsUnit(unit, raidPetUnit))
                 or (UnitExists(raidUnit) and UnitIsOwnerOrControllerOfUnit and UnitIsOwnerOrControllerOfUnit(raidUnit, unit))
             if isMatch then
@@ -487,8 +588,8 @@ function FNC.ResolveFriendlyMinionSubKey(unit)
         end
     elseif IsInGroup() then
         for i = 1, 4 do
-            local partyUnit = "party" .. i
-            local partyPetUnit = "partypet" .. i
+            local partyUnit = PARTY_UNITS[i]
+            local partyPetUnit = PARTY_PET_UNITS[i]
             local isMatch = (UnitExists(partyPetUnit) and UnitIsUnit(unit, partyPetUnit))
                 or (UnitExists(partyUnit) and UnitIsOwnerOrControllerOfUnit and UnitIsOwnerOrControllerOfUnit(partyUnit, unit))
             if isMatch then
@@ -511,7 +612,7 @@ function FNC.ResolveFriendlyMinionSubKey(unit)
                 if IsInRaid() then
                     local numMembers = GetNumGroupMembers()
                     for i = 1, numMembers do
-                        local raidUnit = "raid" .. i
+                        local raidUnit = RAID_UNITS[i]
                         local memberName = UnitName(raidUnit)
                         if IsSafeString(memberName) and memberName == cleanOwner then
                             if FNC.IsInMySubgroup(raidUnit) then
@@ -523,7 +624,7 @@ function FNC.ResolveFriendlyMinionSubKey(unit)
                     end
                 elseif IsInGroup() then
                     for i = 1, 4 do
-                        local partyUnit = "party" .. i
+                        local partyUnit = PARTY_UNITS[i]
                         local memberName = UnitName(partyUnit)
                         if IsSafeString(memberName) and memberName == cleanOwner then
                             return "PartyMinion"

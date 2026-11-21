@@ -1,532 +1,951 @@
 --------------------------------------------------------------------------------
 -- Options.lua
--- Scrollable Blizzard Settings Panel, Row Cards, Sub-Category Drawers, & Color Picker
+-- Lazy-Loaded Blizzard Settings Canvas, Category Cards, & Color Picker
 --------------------------------------------------------------------------------
 
 local addonName, FNC = ...
 
--- Color Picker Helper (compatible with Classic Era 1.15+ ColorPickerFrame API)
-local function ShowColorPicker(r, g, b, callback)
-    if ColorPickerFrame.SetupColorPickerAndShow then
-        local info = {
-            r = r,
-            g = g,
-            b = b,
-            hasOpacity = false,
-            swatchFunc = function()
-                local newR, newG, newB = ColorPickerFrame:GetColorRGB()
-                callback(newR, newG, newB)
-            end,
-            cancelFunc = function(prev)
-                if prev then
-                    callback(prev.r, prev.g, prev.b)
-                end
-            end,
-        }
-        ColorPickerFrame:SetupColorPickerAndShow(info)
-    else
-        local prevR, prevG, prevB = r, g, b
-        ColorPickerFrame.hasOpacity = false
-        ColorPickerFrame.func = function()
-            local newR, newG, newB = ColorPickerFrame:GetColorRGB()
-            callback(newR, newG, newB)
-        end
-        ColorPickerFrame.cancelFunc = function()
-            callback(prevR, prevG, prevB)
-        end
-        ColorPickerFrame:SetColorRGB(r, g, b)
-        ColorPickerFrame:Hide()
-        ColorPickerFrame:Show()
+local DEFAULT_UI_GROUPS = {
+    { key = "Friendly", label = "Friendly" },
+    { key = "Neutral",  label = "Neutral" },
+    { key = "Enemy",    label = "Enemy" },
+    { key = "Quests",   label = "Quests" },
+}
+
+local function GetUIGroups()
+    if type(FNC.UI_GROUPS) == "table" and #FNC.UI_GROUPS > 0 then
+        return FNC.UI_GROUPS
     end
+    return DEFAULT_UI_GROUPS
 end
 
--- Build Blizzard Interface Options Panel
-local configFrame = CreateFrame("Frame", "ForeverNamePlateColorsOptionsPanel", UIParent)
+local function NormalizeCfg(cfg)
+    if type(cfg) ~= "table" then return nil end
+    cfg.key = cfg.key or "CustomCategory"
+    cfg.label = cfg.label or cfg.key
+    cfg.group = cfg.group or "Friendly"
+    if type(cfg.defaultName) ~= "table" then
+        cfg.defaultName = { r = 1.0, g = 1.0, b = 1.0 }
+    else
+        cfg.defaultName.r = cfg.defaultName.r or 1.0
+        cfg.defaultName.g = cfg.defaultName.g or 1.0
+        cfg.defaultName.b = cfg.defaultName.b or 1.0
+    end
+    return cfg
+end
+
+local function SetTooltip(frame, text)
+    if not frame then return end
+    frame:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(text, nil, nil, nil, nil, true)
+        GameTooltip:Show()
+    end)
+    frame:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
+end
+
+local configFrame = CreateFrame("Frame", "FNCConfigPanel", UIParent)
 configFrame.name = "ForeverNamePlateColors"
+configFrame:SetSize(620, 520)
 FNC.configFrame = configFrame
 
-local scrollFrame = CreateFrame("ScrollFrame", "ForeverNamePlateColorsScrollFrame", configFrame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", 0, -4)
-scrollFrame:SetPoint("BOTTOMRIGHT", -26, 4)
+FNC.categoryCards = {}
+FNC.cardsByKey = {}
+FNC.sectionHeaders = {}
+FNC.headersByGroup = {}
 
-local scrollChild = CreateFrame("Frame", "ForeverNamePlateColorsScrollChild", scrollFrame)
-scrollChild:SetWidth(600)
-scrollChild:SetHeight(1200)
-scrollFrame:SetScrollChild(scrollChild)
+local uiBuilt = false
+local scrollFrame, scrollChild, enableCB, matchBtn, enableAllBtn, disableAllBtn
 
-configFrame:SetScript("OnSizeChanged", function(self, width)
-    if width and width > 60 then
-        scrollChild:SetWidth(width - 36)
+local function EnsureDBReady()
+    if type(ForeverNamePlateColorsDB) ~= "table" then
+        ForeverNamePlateColorsDB = {}
     end
-end)
-
-local titleText = scrollChild:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-titleText:SetPoint("TOPLEFT", 16, -12)
-titleText:SetText("ForeverNamePlateColors")
-
-local descText = scrollChild:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-descText:SetPoint("TOPLEFT", titleText, "BOTTOMLEFT", 0, -6)
-descText:SetText("Customize health bar colors, name colors, and nameplate visibility across unit categories.")
-
--- Master Enable Checkbox
-local enableCheckbox = CreateFrame("CheckButton", "FNCEnableCheck", scrollChild, "InterfaceOptionsCheckButtonTemplate")
-enableCheckbox:SetPoint("TOPLEFT", descText, "BOTTOMLEFT", -2, -10)
-enableCheckbox.Text:SetText("Enable ForeverNamePlateColors")
-enableCheckbox:SetScript("OnClick", function(self)
-    ForeverNamePlateColorsDB.enabled = self:GetChecked() and true or false
-    if ForeverNamePlateColorsDB.enabled then
-        FNC:RefreshAllPlates()
-    else
-        FNC:SyncAllCVars()
-        FNC:ResetAllPlates()
+    if FNC.MigrateDB then
+        FNC.MigrateDB(ForeverNamePlateColorsDB)
     end
-end)
+    if FNC.EnsureDefaults then
+        FNC.EnsureDefaults(ForeverNamePlateColorsDB)
+    end
+end
 
--- Show Errors in Chat Checkbox (off by default; errors always log to SavedVariables on disk)
-local showErrorsCheckbox = CreateFrame("CheckButton", "FNCShowErrorsCheck", scrollChild, "InterfaceOptionsCheckButtonTemplate")
-showErrorsCheckbox:SetPoint("LEFT", enableCheckbox.Text, "RIGHT", 28, 0)
-showErrorsCheckbox.Text:SetText("Show Errors in Chat")
-showErrorsCheckbox:SetScript("OnClick", function(self)
-    ForeverNamePlateColorsDB.showErrors = self:GetChecked() and true or false
-end)
+local function CreateSectionHeader(parent, groupKey, label)
+    local header = CreateFrame("Frame", nil, parent)
+    header:SetSize(560, 22)
 
--- Nameplate Visibility Section (CVar Toggles)
-local visBox = CreateFrame("Frame", nil, scrollChild, "BackdropTemplate")
-visBox:SetPoint("TOPLEFT", enableCheckbox, "BOTTOMLEFT", 2, -10)
-visBox:SetPoint("RIGHT", scrollChild, "RIGHT", -12, 0)
-visBox:SetBackdrop({
-    bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-    tile = true, tileSize = 16, edgeSize = 14,
-    insets = { left = 4, right = 4, top = 4, bottom = 4 }
-})
-visBox:SetBackdropColor(0.06, 0.06, 0.08, 0.75)
-visBox:SetBackdropBorderColor(0.35, 0.35, 0.4, 0.9)
+    local text = header:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    text:SetPoint("LEFT", 4, 0)
+    text:SetText(label)
 
-local visHeader = visBox:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-visHeader:SetPoint("TOPLEFT", 12, -10)
-visHeader:SetText("Nameplate Visibility (Show Nameplates On)")
+    local line = header:CreateTexture(nil, "ARTWORK")
+    line:SetHeight(1)
+    line:SetPoint("LEFT", text, "RIGHT", 10, 0)
+    line:SetPoint("RIGHT", header, "RIGHT", -4, 0)
+    line:SetColorTexture(0.5, 0.5, 0.5, 0.5)
 
-local cvarCheckboxes = {}
-local colWidth = 185
-for idx, item in ipairs(FNC.VISIBILITY_CVARS) do
-    local col = (idx - 1) % 3
-    local row = math.floor((idx - 1) / 3)
-    local cb = CreateFrame("CheckButton", "FNCCVarCheck_" .. item.cvar, visBox, "InterfaceOptionsCheckButtonTemplate")
-    cb:SetPoint("TOPLEFT", visHeader, "BOTTOMLEFT", (col * colWidth) - 2, -6 - (row * 26))
-    cb.Text:SetText(item.label)
-    cb:SetScript("OnClick", function(self)
-        local checked = self:GetChecked() and true or false
-        ForeverNamePlateColorsDB.cvars[item.cvar] = checked
-        FNC:ApplyCVar(item.cvar, checked)
-        FNC:RefreshAllPlates()
+    table.insert(FNC.sectionHeaders, header)
+    FNC.headersByGroup[groupKey] = header
+    return header
+end
+
+local function CreateSubCategoryRow(parent, parentCfg, subCfg, yOffset)
+    local rowHeight = 50
+    local row = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    row:SetSize(540, rowHeight)
+    row:SetPoint("TOPLEFT", 0, yOffset)
+    row:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 8,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
+    })
+    row:SetBackdropColor(0.06, 0.06, 0.06, 0.9)
+    row:SetBackdropBorderColor(0.32, 0.32, 0.32, 1)
+
+    local titleStr = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+    titleStr:SetPoint("TOPLEFT", 10, -7)
+    titleStr:SetText(subCfg.label)
+
+    local enabledCB = CreateFrame("CheckButton", nil, row, "InterfaceOptionsCheckButtonTemplate")
+    enabledCB:SetSize(22, 22)
+    enabledCB:SetPoint("LEFT", titleStr, "RIGHT", 10, 0)
+    enabledCB.Text:SetFontObject("GameFontHighlightSmall")
+    enabledCB.Text:SetText("Enabled")
+    SetTooltip(enabledCB, subCfg.tooltip or ("Enable color overrides for " .. subCfg.label .. "."))
+
+    local healthCB = CreateFrame("CheckButton", nil, row, "InterfaceOptionsCheckButtonTemplate")
+    healthCB:SetSize(22, 22)
+    healthCB:SetPoint("BOTTOMLEFT", 8, 3)
+    SetTooltip(healthCB, "Toggle custom health bar color for " .. subCfg.label .. ".")
+
+    local healthBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    healthBtn:SetSize(112, 18)
+    healthBtn:SetPoint("LEFT", healthCB, "RIGHT", 1, 0)
+    healthBtn:SetText("Health Color")
+    local healthSwatch = healthBtn:CreateTexture(nil, "OVERLAY")
+    healthSwatch:SetSize(12, 12)
+    healthSwatch:SetPoint("RIGHT", healthBtn, "RIGHT", -5, 0)
+    healthBtn.swatch = healthSwatch
+
+    local nameCB = CreateFrame("CheckButton", nil, row, "InterfaceOptionsCheckButtonTemplate")
+    nameCB:SetSize(22, 22)
+    nameCB:SetPoint("LEFT", healthBtn, "RIGHT", 10, 0)
+    SetTooltip(nameCB, "Toggle custom name text color for " .. subCfg.label .. ".")
+
+    local nameBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    nameBtn:SetSize(106, 18)
+    nameBtn:SetPoint("LEFT", nameCB, "RIGHT", 1, 0)
+    nameBtn:SetText("Name Color")
+    local nameSwatch = nameBtn:CreateTexture(nil, "OVERLAY")
+    nameSwatch:SetSize(12, 12)
+    nameSwatch:SetPoint("RIGHT", nameBtn, "RIGHT", -5, 0)
+    nameBtn.swatch = nameSwatch
+
+    local subtitleCB = CreateFrame("CheckButton", nil, row, "InterfaceOptionsCheckButtonTemplate")
+    subtitleCB:SetSize(22, 22)
+    subtitleCB:SetPoint("LEFT", nameBtn, "RIGHT", 10, 0)
+    SetTooltip(subtitleCB, "Toggle custom owner tag color for " .. subCfg.label .. ".\nRequires Show Owner Tag to be enabled above.")
+
+    local subtitleBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    subtitleBtn:SetSize(100, 18)
+    subtitleBtn:SetPoint("LEFT", subtitleCB, "RIGHT", 1, 0)
+    subtitleBtn:SetText("Tag Color")
+    local subtitleSwatch = subtitleBtn:CreateTexture(nil, "OVERLAY")
+    subtitleSwatch:SetSize(12, 12)
+    subtitleSwatch:SetPoint("RIGHT", subtitleBtn, "RIGHT", -5, 0)
+    subtitleBtn.swatch = subtitleSwatch
+
+    local resetBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+    resetBtn:SetSize(56, 18)
+    resetBtn:SetPoint("BOTTOMRIGHT", row, "BOTTOMRIGHT", -8, 4)
+    resetBtn:SetText("Reset")
+    SetTooltip(resetBtn, "Reset " .. subCfg.label .. " to default colors and settings.")
+
+    row.subCfg = subCfg
+    row.rowHeight = rowHeight
+    row.enabledCB = enabledCB
+    row.healthCB = healthCB
+    row.healthBtn = healthBtn
+    row.nameCB = nameCB
+    row.nameBtn = nameBtn
+    row.subtitleCB = subtitleCB
+    row.subtitleBtn = subtitleBtn
+    row.resetBtn = resetBtn
+
+    local function GetSubCat()
+        EnsureDBReady()
+        local parentCat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[parentCfg.key]
+        return parentCat and parentCat.subCategories and parentCat.subCategories[subCfg.key]
+    end
+
+    enabledCB:SetScript("OnClick", function(self)
+        local subCat = GetSubCat()
+        if subCat then
+            subCat.enabled = self:GetChecked() and true or false
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        end
     end)
-    cvarCheckboxes[item.cvar] = cb
-end
 
-local numVisRows = math.ceil(#FNC.VISIBILITY_CVARS / 3)
-visBox:SetHeight(42 + (numVisRows * 26))
-
--- Helper to create a color swatch button
-local function CreateColorSwatch(parent, labelText)
-    local btn = CreateFrame("Button", nil, parent)
-    btn:SetSize(20, 20)
-
-    local border = btn:CreateTexture(nil, "BACKGROUND")
-    border:SetAllPoints()
-    border:SetColorTexture(0.8, 0.8, 0.8, 1)
-
-    local swatch = btn:CreateTexture(nil, "ARTWORK")
-    swatch:SetPoint("TOPLEFT", 2, -2)
-    swatch:SetPoint("BOTTOMRIGHT", -2, 2)
-    swatch:SetColorTexture(1, 1, 1, 1)
-    btn.swatch = swatch
-
-    local label = btn:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-    label:SetPoint("LEFT", btn, "RIGHT", 6, 0)
-    label:SetText(labelText)
-    btn.label = label
-
-    return btn
-end
-
--- Build Sectioned Category Cards & Rows
-local uiRows = {}
-local sectionHeaders = {}
-local expandedState = {}
-
-local function RelayoutOptionsPanel()
-    local prevWidget = visBox
-    local totalHeight = visBox:GetHeight() + 115
-
-    for idx, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-        local secHeader = sectionHeaders[idx]
-        if secHeader then
-            secHeader:ClearAllPoints()
-            secHeader:SetPoint("TOPLEFT", prevWidget, "BOTTOMLEFT", 2, -16)
-            prevWidget = secHeader
-            totalHeight = totalHeight + 32
+    healthCB:SetScript("OnClick", function(self)
+        local subCat = GetSubCat()
+        if subCat then
+            subCat.healthEnabled = self:GetChecked() and true or false
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
         end
+    end)
 
-        local row = uiRows[cfg.key]
-        if row and row.card then
-            local isExpanded = cfg.subCategories and expandedState[cfg.key]
-            local baseHeight = row.baseHeight
-            local totalCardHeight = baseHeight
-
-            if cfg.subCategories and row.advDrawer then
-                if isExpanded then
-                    row.advDrawer:Show()
-                    totalCardHeight = baseHeight + row.advDrawerHeight + 6
-                else
-                    row.advDrawer:Hide()
-                end
-            end
-
-            row.card:SetHeight(totalCardHeight)
-            row.card:ClearAllPoints()
-            local topOffset = secHeader and -6 or -8
-            row.card:SetPoint("TOPLEFT", prevWidget, "BOTTOMLEFT", secHeader and -2 or 0, topOffset)
-            row.card:SetPoint("RIGHT", scrollChild, "RIGHT", -12, 0)
-
-            prevWidget = row.card
-            totalHeight = totalHeight + totalCardHeight + math.abs(topOffset)
+    nameCB:SetScript("OnClick", function(self)
+        local subCat = GetSubCat()
+        if subCat then
+            subCat.nameEnabled = self:GetChecked() and true or false
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
         end
-    end
+    end)
 
-    scrollChild:SetHeight(totalHeight + 24)
+    subtitleCB:SetScript("OnClick", function(self)
+        local subCat = GetSubCat()
+        if subCat then
+            subCat.subtitleEnabled = self:GetChecked() and true or false
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        end
+    end)
+
+    healthBtn:SetScript("OnClick", function()
+        FNC:OpenColorPicker(parentCfg.key, "health", healthSwatch, subCfg.key)
+    end)
+
+    nameBtn:SetScript("OnClick", function()
+        FNC:OpenColorPicker(parentCfg.key, "name", nameSwatch, subCfg.key)
+    end)
+
+    subtitleBtn:SetScript("OnClick", function()
+        FNC:OpenColorPicker(parentCfg.key, "subtitle", subtitleSwatch, subCfg.key)
+    end)
+
+    resetBtn:SetScript("OnClick", function()
+        local subCat = GetSubCat()
+        if subCat then
+            subCat.enabled = (subCfg.defaultEnabled ~= nil) and subCfg.defaultEnabled or false
+            subCat.healthEnabled = true
+            subCat.nameEnabled = true
+            subCat.subtitleEnabled = true
+            subCat.colorHealth = FNC.GetDefaultHealth and FNC.GetDefaultHealth(subCfg) or { r = 1, g = 1, b = 1 }
+            subCat.colorName = { r = subCfg.defaultName.r, g = subCfg.defaultName.g, b = subCfg.defaultName.b }
+            subCat.colorSubtitle = FNC.GetDefaultSubtitle and FNC.GetDefaultSubtitle(subCfg) or { r = 1, g = 0.82, b = 0 }
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+            print(string.format("|cFF00FFCCForeverNamePlateColors|r Reset %s to defaults.", subCfg.label))
+        end
+    end)
+
+    return row
 end
 
-local lastSection = nil
-for idx, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-    if cfg.section and cfg.section ~= lastSection then
-        lastSection = cfg.section
-        local secHeader = scrollChild:CreateFontString(nil, "ARTWORK", "GameFontNormalMed2")
-        secHeader:SetText(cfg.section)
-        secHeader:SetTextColor(1.0, 0.82, 0.0)
-        sectionHeaders[idx] = secHeader
-    end
+local function CreateCategoryCard(parent, rawCfg)
+    local cfg = NormalizeCfg(rawCfg)
+    if not cfg then return nil end
 
-    local hasExtraRow = cfg.hasHealthBarOption or cfg.hasSubtitleOption or (cfg.subCategories ~= nil)
-    local baseHeight = hasExtraRow and 98 or 72
-
-    local card = CreateFrame("Frame", nil, scrollChild, "BackdropTemplate")
-    card:SetHeight(baseHeight)
+    local baseHeight = (cfg.hasHealthBarOption or cfg.hasSubtitleOption) and 78 or 54
+    local card = CreateFrame("Frame", nil, parent, "BackdropTemplate")
+    card:SetSize(560, baseHeight)
     card:SetBackdrop({
         bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 16, edgeSize = 14,
-        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+        tile = true, tileSize = 16, edgeSize = 10,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
     })
-    card:SetBackdropColor(0.08, 0.08, 0.1, 0.78)
-    card:SetBackdropBorderColor(0.35, 0.35, 0.4, 0.9)
+    card:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+    card:SetBackdropBorderColor(0.4, 0.4, 0.4, 1)
 
-    local row = { card = card, baseHeight = baseHeight }
+    local titleStr = card:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    titleStr:SetPoint("TOPLEFT", 12, -8)
+    titleStr:SetText(cfg.label)
 
-    local catEnable = CreateFrame("CheckButton", "FNCCatEnable_" .. cfg.key, card, "InterfaceOptionsCheckButtonTemplate")
-    catEnable:SetPoint("TOPLEFT", 10, -8)
-    catEnable.Text:SetText(cfg.label)
-    catEnable.Text:SetFontObject("GameFontNormal")
-    catEnable:SetScript("OnClick", function(self)
-        ForeverNamePlateColorsDB.categories[cfg.key].enabled = self:GetChecked() and true or false
-        FNC:RefreshAllPlates()
-    end)
-    row.catEnable = catEnable
-
-    local resetBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-    resetBtn:SetSize(74, 22)
-    resetBtn:SetPoint("TOPRIGHT", card, "TOPRIGHT", -10, -10)
-    resetBtn:SetText("Reset")
-    row.resetBtn = resetBtn
-
-    if cfg.hasHealthOption then
-        local healthCheck = CreateFrame("CheckButton", "FNCHealthCheck_" .. cfg.key, card, "InterfaceOptionsCheckButtonTemplate")
-        healthCheck:SetPoint("TOPLEFT", catEnable, "BOTTOMLEFT", 18, -2)
-        healthCheck.Text:SetText("Health")
-        healthCheck:SetScript("OnClick", function(self)
-            ForeverNamePlateColorsDB.categories[cfg.key].healthEnabled = self:GetChecked() and true or false
-            FNC:RefreshAllPlates()
-        end)
-        row.healthCheck = healthCheck
-
-        local healthSwatch = CreateColorSwatch(card, "Color")
-        healthSwatch:SetPoint("LEFT", healthCheck.Text, "RIGHT", 10, 0)
-        healthSwatch:SetScript("OnClick", function()
-            local c = ForeverNamePlateColorsDB.categories[cfg.key].colorHealth
-            ShowColorPicker(c.r, c.g, c.b, function(r, g, b)
-                c.r, c.g, c.b = r, g, b
-                healthSwatch.swatch:SetColorTexture(r, g, b, 1)
-                FNC:RefreshAllPlates()
-            end)
-        end)
-        row.healthSwatch = healthSwatch
+    local enabledCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
+    enabledCB:SetPoint("LEFT", titleStr, "RIGHT", 14, 0)
+    enabledCB.Text:SetText("Enabled")
+    local enabledTooltip = cfg.enabledTooltip or ("Enable or disable color overrides for " .. cfg.label .. ".\nWhen unchecked, Blizzard defaults are used.")
+    if not cfg.enabledTooltip and cfg.cvarSync then
+        enabledTooltip = enabledTooltip .. "\nAlso synchronizes Blizzard nameplate visibility for this category."
     end
+    SetTooltip(enabledCB, enabledTooltip)
 
-    local nameCheck = CreateFrame("CheckButton", "FNCNameCheck_" .. cfg.key, card, "InterfaceOptionsCheckButtonTemplate")
-    if cfg.hasHealthOption then
-        nameCheck:SetPoint("TOPLEFT", catEnable, "BOTTOMLEFT", 215, -2)
-    else
-        nameCheck:SetPoint("TOPLEFT", catEnable, "BOTTOMLEFT", 18, -2)
-    end
-    nameCheck.Text:SetText("Name")
-    nameCheck:SetScript("OnClick", function(self)
-        ForeverNamePlateColorsDB.categories[cfg.key].nameEnabled = self:GetChecked() and true or false
-        FNC:RefreshAllPlates()
-    end)
-    row.nameCheck = nameCheck
+    if cfg.subCategories then
+        local advancedBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+        advancedBtn:SetSize(115, 20)
+        advancedBtn:SetPoint("TOPRIGHT", card, "TOPRIGHT", -8, -6)
+        advancedBtn:SetText("Show Advanced")
+        SetTooltip(advancedBtn, "Expand or collapse granular overrides for Personal Minion, Party Minion (Subgroup), and Raid Minion (Other Subgroups).")
+        card.advancedBtn = advancedBtn
 
-    local nameSwatch = CreateColorSwatch(card, "Color")
-    nameSwatch:SetPoint("LEFT", nameCheck.Text, "RIGHT", 10, 0)
-    nameSwatch:SetScript("OnClick", function()
-        local c = ForeverNamePlateColorsDB.categories[cfg.key].colorName
-        ShowColorPicker(c.r, c.g, c.b, function(r, g, b)
-            c.r, c.g, c.b = r, g, b
-            nameSwatch.swatch:SetColorTexture(r, g, b, 1)
-            FNC:RefreshAllPlates()
+        advancedBtn:SetScript("OnClick", function()
+            EnsureDBReady()
+            local cat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[cfg.key]
+            if cat then
+                cat.advancedExpanded = not cat.advancedExpanded
+                FNC:UpdateConfigPanelUI()
+            end
         end)
-    end)
-    row.nameSwatch = nameSwatch
+    end
 
     if cfg.hasHealthBarOption then
-        local showHBCheck = CreateFrame("CheckButton", "FNCShowHBCheck_" .. cfg.key, card, "InterfaceOptionsCheckButtonTemplate")
-        showHBCheck:SetPoint("TOPLEFT", catEnable, "BOTTOMLEFT", 18, -28)
-        showHBCheck.Text:SetText("Show Health Bar")
-        showHBCheck:SetScript("OnClick", function(self)
-            ForeverNamePlateColorsDB.categories[cfg.key].showHealthBar = self:GetChecked() and true or false
-            FNC:RefreshAllPlates()
+        local healthBarCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
+        healthBarCB:SetPoint("TOPLEFT", 10, -28)
+        healthBarCB.Text:SetText("Show Health Bar")
+        SetTooltip(healthBarCB, "When unchecked, activates Headline Mode: hides the health bar and level text.\nWhen checked, displays the standard health bar.")
+        card.healthBarCB = healthBarCB
+
+        healthBarCB:SetScript("OnClick", function(self)
+            EnsureDBReady()
+            local cat = ForeverNamePlateColorsDB.categories[cfg.key]
+            if cat then
+                cat.showHealthBar = self:GetChecked() and true or false
+                FNC:UpdateConfigPanelUI()
+                if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+            end
         end)
-        row.showHBCheck = showHBCheck
     end
 
     if cfg.hasSubtitleOption then
-        local showSubCheck = CreateFrame("CheckButton", "FNCShowSubCheck_" .. cfg.key, card, "InterfaceOptionsCheckButtonTemplate")
-        if cfg.hasHealthBarOption then
-            showSubCheck:SetPoint("TOPLEFT", catEnable, "BOTTOMLEFT", 215, -28)
+        local subtitleCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
+        if card.healthBarCB then
+            subtitleCB:SetPoint("LEFT", card.healthBarCB.Text, "RIGHT", 16, 0)
         else
-            showSubCheck:SetPoint("TOPLEFT", catEnable, "BOTTOMLEFT", 18, -28)
+            subtitleCB:SetPoint("TOPLEFT", 10, -28)
         end
-        showSubCheck.Text:SetText(cfg.subtitleLabel or "Show Title")
-        showSubCheck:SetScript("OnClick", function(self)
-            ForeverNamePlateColorsDB.categories[cfg.key].showSubtitle = self:GetChecked() and true or false
-            FNC:RefreshAllPlates()
-        end)
-        row.showSubCheck = showSubCheck
+        subtitleCB.Text:SetText(cfg.subtitleLabel or "Show Subtitle")
+        SetTooltip(subtitleCB, cfg.subtitleTooltip or "Toggle displaying the unit's subtitle below their name.")
+        card.subtitleCB = subtitleCB
 
-        local subSwatch = CreateColorSwatch(card, "Title Color")
-        subSwatch:SetPoint("LEFT", showSubCheck.Text, "RIGHT", 10, 0)
-        subSwatch:SetScript("OnClick", function()
-            local c = ForeverNamePlateColorsDB.categories[cfg.key].colorSubtitle
-            ShowColorPicker(c.r, c.g, c.b, function(r, g, b)
-                c.r, c.g, c.b = r, g, b
-                subSwatch.swatch:SetColorTexture(r, g, b, 1)
-                FNC:RefreshAllPlates()
-            end)
+        subtitleCB:SetScript("OnClick", function(self)
+            EnsureDBReady()
+            local cat = ForeverNamePlateColorsDB.categories[cfg.key]
+            if cat then
+                cat.showSubtitle = self:GetChecked() and true or false
+                FNC:UpdateConfigPanelUI()
+                if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+            end
         end)
-        row.subSwatch = subSwatch
     end
+
+    local baseRowY = (cfg.hasHealthBarOption or cfg.hasSubtitleOption) and -54 or -30
+
+    local healthCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
+    healthCB:SetPoint("TOPLEFT", 10, baseRowY + 4)
+    SetTooltip(healthCB, "Toggle custom health bar color for " .. cfg.label .. ".\nWhen unchecked, Blizzard default health color is used.")
+
+    local healthBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+    healthBtn:SetSize(120, 20)
+    healthBtn:SetPoint("LEFT", healthCB, "RIGHT", 2, 0)
+    healthBtn:SetText("Health Color")
+    local healthSwatch = healthBtn:CreateTexture(nil, "OVERLAY")
+    healthSwatch:SetSize(14, 14)
+    healthSwatch:SetPoint("RIGHT", healthBtn, "RIGHT", -6, 0)
+    healthBtn.swatch = healthSwatch
+
+    local nameCB = CreateFrame("CheckButton", nil, card, "InterfaceOptionsCheckButtonTemplate")
+    nameCB:SetPoint("LEFT", healthBtn, "RIGHT", 12, 0)
+    SetTooltip(nameCB, "Toggle custom name text color for " .. cfg.label .. ".\nWhen unchecked, Blizzard default name color is used.")
+
+    local nameBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+    nameBtn:SetSize(120, 20)
+    nameBtn:SetPoint("LEFT", nameCB, "RIGHT", 2, 0)
+    nameBtn:SetText("Name Color")
+    local nameSwatch = nameBtn:CreateTexture(nil, "OVERLAY")
+    nameSwatch:SetSize(14, 14)
+    nameSwatch:SetPoint("RIGHT", nameBtn, "RIGHT", -6, 0)
+    nameBtn.swatch = nameSwatch
+
+    if cfg.hasSubtitleOption then
+        local subtitleBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+        subtitleBtn:SetSize(105, 20)
+        subtitleBtn:SetPoint("LEFT", nameBtn, "RIGHT", 14, 0)
+        subtitleBtn:SetText(cfg.subtitleButtonLabel or "Subtitle Color")
+        SetTooltip(subtitleBtn, "Customize the color of " .. (cfg.subtitleLabel or "the subtitle") .. ".")
+        local subtitleSwatch = subtitleBtn:CreateTexture(nil, "OVERLAY")
+        subtitleSwatch:SetSize(14, 14)
+        subtitleSwatch:SetPoint("RIGHT", subtitleBtn, "RIGHT", -6, 0)
+        subtitleBtn.swatch = subtitleSwatch
+        card.subtitleBtn = subtitleBtn
+
+        subtitleBtn:SetScript("OnClick", function()
+            FNC:OpenColorPicker(cfg.key, "subtitle", subtitleSwatch)
+        end)
+    end
+
+    local resetBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
+    resetBtn:SetSize(65, 20)
+    resetBtn:SetPoint("TOPRIGHT", card, "TOPRIGHT", -8, baseRowY + 2)
+    resetBtn:SetText("Reset")
+    SetTooltip(resetBtn, "Reset " .. cfg.label .. " to default colors and settings.")
 
     if cfg.subCategories then
-        local advBtn = CreateFrame("Button", nil, card, "UIPanelButtonTemplate")
-        advBtn:SetSize(112, 22)
-        advBtn:SetPoint("RIGHT", resetBtn, "LEFT", -6, 0)
-        advBtn:SetText("Advanced  v")
-        row.advBtn = advBtn
+        local advContainer = CreateFrame("Frame", nil, card)
+        advContainer:SetPoint("TOPLEFT", card, "TOPLEFT", 10, -baseHeight - 2)
+        advContainer:SetWidth(540)
+        advContainer:Hide()
 
-        local subBlockHeight = 64
-        local advDrawerHeight = 14 + (#cfg.subCategories * subBlockHeight)
-        row.advDrawerHeight = advDrawerHeight
-
-        local advDrawer = CreateFrame("Frame", nil, card, "BackdropTemplate")
-        advDrawer:SetPoint("TOPLEFT", card, "TOPLEFT", 14, -baseHeight)
-        advDrawer:SetPoint("RIGHT", card, "RIGHT", -12, 0)
-        advDrawer:SetHeight(advDrawerHeight)
-        advDrawer:SetBackdrop({
-            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-            tile = true, tileSize = 16, edgeSize = 12,
-            insets = { left = 3, right = 3, top = 3, bottom = 3 }
-        })
-        advDrawer:SetBackdropColor(0.04, 0.04, 0.06, 0.85)
-        advDrawer:SetBackdropBorderColor(0.28, 0.28, 0.34, 0.85)
-        advDrawer:Hide()
-        row.advDrawer = advDrawer
-        row.subRows = {}
-
-        for sIdx, subCfg in ipairs(cfg.subCategories) do
-            local yOffset = -8 - ((sIdx - 1) * subBlockHeight)
-            local subRow = {}
-
-            local subEnable = CreateFrame("CheckButton", "FNCSubEnable_" .. subCfg.key, advDrawer, "InterfaceOptionsCheckButtonTemplate")
-            subEnable:SetPoint("TOPLEFT", advDrawer, "TOPLEFT", 8, yOffset)
-            subEnable.Text:SetText(subCfg.label)
-            subEnable.Text:SetFontObject("GameFontNormalSmall")
-            subEnable:SetScript("OnClick", function(self)
-                ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].enabled = self:GetChecked() and true or false
-                FNC:RefreshAllPlates()
-            end)
-            subRow.subEnable = subEnable
-
-            local subHealthCheck = CreateFrame("CheckButton", "FNCSubHealthCheck_" .. subCfg.key, advDrawer, "InterfaceOptionsCheckButtonTemplate")
-            subHealthCheck:SetPoint("TOPLEFT", subEnable, "BOTTOMLEFT", 16, 2)
-            subHealthCheck.Text:SetText("Health")
-            subHealthCheck:SetScript("OnClick", function(self)
-                ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].healthEnabled = self:GetChecked() and true or false
-                FNC:RefreshAllPlates()
-            end)
-            subRow.subHealthCheck = subHealthCheck
-
-            local subHealthSwatch = CreateColorSwatch(advDrawer, "Color")
-            subHealthSwatch:SetPoint("LEFT", subHealthCheck.Text, "RIGHT", 6, 0)
-            subHealthSwatch:SetScript("OnClick", function()
-                local c = ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].colorHealth
-                ShowColorPicker(c.r, c.g, c.b, function(r, g, b)
-                    c.r, c.g, c.b = r, g, b
-                    subHealthSwatch.swatch:SetColorTexture(r, g, b, 1)
-                    FNC:RefreshAllPlates()
-                end)
-            end)
-            subRow.subHealthSwatch = subHealthSwatch
-
-            local subNameCheck = CreateFrame("CheckButton", "FNCSubNameCheck_" .. subCfg.key, advDrawer, "InterfaceOptionsCheckButtonTemplate")
-            subNameCheck:SetPoint("TOPLEFT", subEnable, "BOTTOMLEFT", 168, 2)
-            subNameCheck.Text:SetText("Name")
-            subNameCheck:SetScript("OnClick", function(self)
-                ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].nameEnabled = self:GetChecked() and true or false
-                FNC:RefreshAllPlates()
-            end)
-            subRow.subNameCheck = subNameCheck
-
-            local subNameSwatch = CreateColorSwatch(advDrawer, "Color")
-            subNameSwatch:SetPoint("LEFT", subNameCheck.Text, "RIGHT", 6, 0)
-            subNameSwatch:SetScript("OnClick", function()
-                local c = ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].colorName
-                ShowColorPicker(c.r, c.g, c.b, function(r, g, b)
-                    c.r, c.g, c.b = r, g, b
-                    subNameSwatch.swatch:SetColorTexture(r, g, b, 1)
-                    FNC:RefreshAllPlates()
-                end)
-            end)
-            subRow.subNameSwatch = subNameSwatch
-
-            local subTitleCheck = CreateFrame("CheckButton", "FNCSubTitleCheck_" .. subCfg.key, advDrawer, "InterfaceOptionsCheckButtonTemplate")
-            subTitleCheck:SetPoint("TOPLEFT", subEnable, "BOTTOMLEFT", 315, 2)
-            subTitleCheck.Text:SetText("Owner")
-            subTitleCheck:SetScript("OnClick", function(self)
-                ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].subtitleEnabled = self:GetChecked() and true or false
-                FNC:RefreshAllPlates()
-            end)
-            subRow.subTitleCheck = subTitleCheck
-
-            local subTitleSwatch = CreateColorSwatch(advDrawer, "Color")
-            subTitleSwatch:SetPoint("LEFT", subTitleCheck.Text, "RIGHT", 6, 0)
-            subTitleSwatch:SetScript("OnClick", function()
-                local c = ForeverNamePlateColorsDB.categories[cfg.key].subCategories[subCfg.key].colorSubtitle
-                ShowColorPicker(c.r, c.g, c.b, function(r, g, b)
-                    c.r, c.g, c.b = r, g, b
-                    subTitleSwatch.swatch:SetColorTexture(r, g, b, 1)
-                    FNC:RefreshAllPlates()
-                end)
-            end)
-            subRow.subTitleSwatch = subTitleSwatch
-
-            row.subRows[subCfg.key] = subRow
+        local subRows = {}
+        local subY = 0
+        for _, subCfg in ipairs(cfg.subCategories) do
+            local normalizedSub = NormalizeCfg(subCfg)
+            if normalizedSub then
+                local row = CreateSubCategoryRow(advContainer, cfg, normalizedSub, subY)
+                subY = subY - row.rowHeight - 4
+                table.insert(subRows, row)
+            end
         end
+        local advHeight = math.abs(subY) + 4
+        advContainer:SetHeight(advHeight)
 
-        advBtn:SetScript("OnClick", function()
-            expandedState[cfg.key] = not expandedState[cfg.key]
-            advBtn:SetText(expandedState[cfg.key] and "Advanced  ^" or "Advanced  v")
-            RelayoutOptionsPanel()
-        end)
+        card.advancedContainer = advContainer
+        card.advancedHeight = advHeight
+        card.subRows = subRows
     end
 
-    resetBtn:SetScript("OnClick", function()
-        local cat = ForeverNamePlateColorsDB.categories[cfg.key]
-        cat.enabled = true
-        if cfg.hasHealthBarOption then
-            cat.showHealthBar = (cfg.defaultShowHealthBar ~= false)
-        end
-        if cfg.hasSubtitleOption then
-            cat.showSubtitle = (cfg.defaultShowSubtitle == true)
-            cat.colorSubtitle = FNC.CopyColor(cfg.defaultSubtitle or { r = 1.0, g = 0.82, b = 0.0 })
-        end
-        if cfg.hasHealthOption then
-            cat.healthEnabled = true
-            cat.colorHealth = FNC.CopyColor(cfg.defaultHealth)
-        end
-        cat.nameEnabled = true
-        cat.colorName = FNC.CopyColor(cfg.defaultName)
+    card.cfg = cfg
+    card.baseHeight = baseHeight
+    card.titleStr = titleStr
+    card.enabledCB = enabledCB
+    card.healthCB = healthCB
+    card.healthBtn = healthBtn
+    card.nameCB = nameCB
+    card.nameBtn = nameBtn
+    card.resetBtn = resetBtn
 
-        if cfg.subCategories and cat.subCategories then
-            for _, subCfg in ipairs(cfg.subCategories) do
-                local subCat = cat.subCategories[subCfg.key]
-                if subCat then
-                    subCat.enabled = (subCfg.defaultEnabled == true)
-                    subCat.healthEnabled = true
-                    subCat.nameEnabled = true
-                    subCat.subtitleEnabled = true
-                    subCat.colorHealth = FNC.CopyColor(subCfg.defaultHealth)
-                    subCat.colorName = FNC.CopyColor(subCfg.defaultName)
-                    subCat.colorSubtitle = FNC.CopyColor(subCfg.defaultSubtitle or cfg.defaultSubtitle or { r = 1.0, g = 0.82, b = 0.0 })
+    enabledCB:SetScript("OnClick", function(self)
+        EnsureDBReady()
+        local cat = ForeverNamePlateColorsDB.categories[cfg.key]
+        if cat then
+            cat.enabled = self:GetChecked() and true or false
+            if not cat.enabled and cfg.syncHealthBarWithEnabled then
+                cat.showHealthBar = false
+            end
+            if FNC.SyncAllCVars then FNC:SyncAllCVars() end
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        end
+    end)
+
+    healthCB:SetScript("OnClick", function(self)
+        EnsureDBReady()
+        local cat = ForeverNamePlateColorsDB.categories[cfg.key]
+        if cat then
+            cat.healthEnabled = self:GetChecked() and true or false
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        end
+    end)
+
+    nameCB:SetScript("OnClick", function(self)
+        EnsureDBReady()
+        local cat = ForeverNamePlateColorsDB.categories[cfg.key]
+        if cat then
+            cat.nameEnabled = self:GetChecked() and true or false
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        end
+    end)
+
+    healthBtn:SetScript("OnClick", function()
+        FNC:OpenColorPicker(cfg.key, "health", healthSwatch)
+    end)
+
+    nameBtn:SetScript("OnClick", function()
+        FNC:OpenColorPicker(cfg.key, "name", nameSwatch)
+    end)
+
+    resetBtn:SetScript("OnClick", function()
+        EnsureDBReady()
+        local cat = ForeverNamePlateColorsDB.categories[cfg.key]
+        if cat then
+            if cfg.defaultEnabled ~= nil then
+                cat.enabled = cfg.defaultEnabled
+            else
+                cat.enabled = true
+            end
+            cat.healthEnabled = true
+            cat.nameEnabled = true
+            if cfg.hasHealthBarOption then
+                if cfg.defaultShowHealthBar ~= nil then
+                    cat.showHealthBar = cfg.defaultShowHealthBar
+                else
+                    cat.showHealthBar = false
+                end
+            end
+            if cfg.hasSubtitleOption then
+                cat.showSubtitle = true
+                cat.colorSubtitle = FNC.GetDefaultSubtitle and FNC.GetDefaultSubtitle(cfg) or { r = 1, g = 0.82, b = 0 }
+            end
+            cat.colorHealth = FNC.GetDefaultHealth and FNC.GetDefaultHealth(cfg) or { r = 1, g = 1, b = 1 }
+            cat.colorName = { r = cfg.defaultName.r, g = cfg.defaultName.g, b = cfg.defaultName.b }
+
+            if cfg.subCategories and cat.subCategories then
+                for _, subCfg in ipairs(cfg.subCategories) do
+                    local subCat = cat.subCategories[subCfg.key]
+                    if subCat then
+                        subCat.enabled = (subCfg.defaultEnabled ~= nil) and subCfg.defaultEnabled or false
+                        subCat.healthEnabled = true
+                        subCat.nameEnabled = true
+                        subCat.subtitleEnabled = true
+                        subCat.colorHealth = FNC.GetDefaultHealth and FNC.GetDefaultHealth(subCfg) or { r = 1, g = 1, b = 1 }
+                        subCat.colorName = { r = subCfg.defaultName.r, g = subCfg.defaultName.g, b = subCfg.defaultName.b }
+                        subCat.colorSubtitle = FNC.GetDefaultSubtitle and FNC.GetDefaultSubtitle(subCfg) or { r = 1, g = 0.82, b = 0 }
+                    end
+                end
+            end
+
+            if FNC.SyncAllCVars then FNC:SyncAllCVars() end
+            FNC:UpdateConfigPanelUI()
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+            print(string.format("|cFF00FFCCForeverNamePlateColors|r Reset %s to defaults.", cfg.label))
+        end
+    end)
+
+    table.insert(FNC.categoryCards, card)
+    FNC.cardsByKey[cfg.key] = card
+    return card
+end
+
+local function BuildConfigPanelUI()
+    if uiBuilt then return end
+    uiBuilt = true
+    EnsureDBReady()
+
+    local title = configFrame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+    title:SetPoint("TOPLEFT", 16, -16)
+    title:SetText("ForeverNamePlateColors Options")
+
+    scrollFrame = CreateFrame("ScrollFrame", "FNCConfigScrollFrame", configFrame, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", 10, -42)
+    scrollFrame:SetPoint("BOTTOMRIGHT", -26, 10)
+    scrollFrame:EnableMouseWheel(true)
+    scrollFrame:SetScript("OnMouseWheel", function(self, delta)
+        local cur = self:GetVerticalScroll()
+        local max = self:GetVerticalScrollRange()
+        local step = 35
+        local new = cur - (delta * step)
+        if new < 0 then new = 0 end
+        if new > max then new = max end
+        self:SetVerticalScroll(new)
+    end)
+
+    scrollChild = CreateFrame("Frame", "FNCConfigScrollChild", scrollFrame)
+    scrollChild:SetSize(570, 900)
+    scrollFrame:SetScrollChild(scrollChild)
+
+    configFrame:SetScript("OnSizeChanged", function(self, w)
+        if scrollChild and w and w > 60 then
+            scrollChild:SetWidth(math.max(w - 40, 570))
+        end
+    end)
+
+    local globalBox = CreateFrame("Frame", nil, scrollChild, "BackdropTemplate")
+    globalBox:SetSize(560, 74)
+    globalBox:SetPoint("TOPLEFT", 6, -6)
+    globalBox:SetBackdrop({
+        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 10,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
+    })
+    globalBox:SetBackdropColor(0.08, 0.08, 0.08, 0.85)
+    globalBox:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+
+    enableCB = CreateFrame("CheckButton", nil, globalBox, "InterfaceOptionsCheckButtonTemplate")
+    enableCB:SetPoint("TOPLEFT", 10, -6)
+    enableCB.Text:SetText("Enable Addon")
+    SetTooltip(enableCB, "Master toggle for ForeverNamePlateColors.\nWhen unchecked, all nameplates revert to Blizzard defaults.")
+
+    enableCB:SetScript("OnClick", function(self)
+        EnsureDBReady()
+        ForeverNamePlateColorsDB.enabled = self:GetChecked() and true or false
+        if FNC.SyncAllCVars then FNC:SyncAllCVars() end
+        FNC:UpdateConfigPanelUI()
+        if ForeverNamePlateColorsDB.enabled then
+            if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        else
+            if FNC.ResetAllPlates then FNC:ResetAllPlates() end
+        end
+    end)
+
+    matchBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
+    matchBtn:SetSize(200, 22)
+    matchBtn:SetPoint("BOTTOMLEFT", 10, 8)
+    matchBtn:SetText("Match Name to Health Colors")
+    SetTooltip(matchBtn, "One-click action to copy every category's health bar color to its name color.\nYou can still customize individual name colors afterwards.")
+
+    matchBtn:SetScript("OnClick", function()
+        EnsureDBReady()
+        local db = ForeverNamePlateColorsDB
+        if not db or not db.categories then return end
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+            local cat = db.categories[cfg.key]
+            if cat and cat.colorHealth then
+                cat.colorName = { r = cat.colorHealth.r, g = cat.colorHealth.g, b = cat.colorHealth.b }
+            end
+            if cfg.subCategories and cat and cat.subCategories then
+                for _, subCfg in ipairs(cfg.subCategories) do
+                    local subCat = cat.subCategories[subCfg.key]
+                    if subCat and subCat.colorHealth then
+                        subCat.colorName = { r = subCat.colorHealth.r, g = subCat.colorHealth.g, b = subCat.colorHealth.b }
+                    end
                 end
             end
         end
-
         FNC:UpdateConfigPanelUI()
-        FNC:RefreshAllPlates()
+        if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        print("|cFF00FFCCForeverNamePlateColors|r All name colors matched to their health colors.")
     end)
 
-    uiRows[cfg.key] = row
-end
+    enableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
+    enableAllBtn:SetSize(145, 22)
+    enableAllBtn:SetPoint("LEFT", matchBtn, "RIGHT", 10, 0)
+    enableAllBtn:SetText("Enable All Categories")
+    SetTooltip(enableAllBtn, "Enable color overrides across all categories.\nDoes not change your individual health/name channel settings.")
 
-RelayoutOptionsPanel()
+    enableAllBtn:SetScript("OnClick", function()
+        EnsureDBReady()
+        local db = ForeverNamePlateColorsDB
+        if not db or not db.categories then return end
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+            local cat = db.categories[cfg.key]
+            if cat then cat.enabled = true end
+        end
+        if FNC.SyncAllCVars then FNC:SyncAllCVars() end
+        FNC:UpdateConfigPanelUI()
+        if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        print("|cFF00FFCCForeverNamePlateColors|r All categories enabled.")
+    end)
 
--- Sync UI controls with SavedVariables
-function FNC:UpdateConfigPanelUI()
-    if not ForeverNamePlateColorsDB then return end
-    enableCheckbox:SetChecked(ForeverNamePlateColorsDB.enabled)
-    showErrorsCheckbox:SetChecked(ForeverNamePlateColorsDB.showErrors == true)
+    disableAllBtn = CreateFrame("Button", nil, globalBox, "UIPanelButtonTemplate")
+    disableAllBtn:SetSize(145, 22)
+    disableAllBtn:SetPoint("LEFT", enableAllBtn, "RIGHT", 10, 0)
+    disableAllBtn:SetText("Disable All Categories")
+    SetTooltip(disableAllBtn, "Disable color overrides across all categories.\nGreys out all category controls and restores Blizzard defaults.")
 
-    if ForeverNamePlateColorsDB.cvars then
-        for cvar, cb in pairs(cvarCheckboxes) do
-            cb:SetChecked(ForeverNamePlateColorsDB.cvars[cvar])
+    disableAllBtn:SetScript("OnClick", function()
+        EnsureDBReady()
+        local db = ForeverNamePlateColorsDB
+        if not db or not db.categories then return end
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+            local cat = db.categories[cfg.key]
+            if cat then
+                cat.enabled = false
+                if cfg.syncHealthBarWithEnabled then
+                    cat.showHealthBar = false
+                end
+            end
+        end
+        if FNC.SyncAllCVars then FNC:SyncAllCVars() end
+        FNC:UpdateConfigPanelUI()
+        if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+        print("|cFF00FFCCForeverNamePlateColors|r All categories disabled.")
+    end)
+
+    local placedKeys = {}
+    for _, group in ipairs(GetUIGroups()) do
+        CreateSectionHeader(scrollChild, group.key, group.label)
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+            local norm = NormalizeCfg(cfg)
+            if norm and norm.group == group.key then
+                CreateCategoryCard(scrollChild, norm)
+                placedKeys[norm.key] = true
+            end
         end
     end
 
-    if ForeverNamePlateColorsDB.categories then
-        for _, cfg in ipairs(FNC.CATEGORY_CONFIG) do
-            local cat = ForeverNamePlateColorsDB.categories[cfg.key]
-            local row = uiRows[cfg.key]
-            if cat and row then
-                row.catEnable:SetChecked(cat.enabled)
-                if cfg.hasHealthOption and row.healthCheck and row.healthSwatch then
-                    row.healthCheck:SetChecked(cat.healthEnabled)
-                    row.healthSwatch.swatch:SetColorTexture(cat.colorHealth.r, cat.colorHealth.g, cat.colorHealth.b, 1)
-                end
-                row.nameCheck:SetChecked(cat.nameEnabled)
-                row.nameSwatch.swatch:SetColorTexture(cat.colorName.r, cat.colorName.g, cat.colorName.b, 1)
+    for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+        local norm = NormalizeCfg(cfg)
+        if norm and not placedKeys[norm.key] then
+            CreateCategoryCard(scrollChild, norm)
+        end
+    end
+end
 
-                if cfg.hasHealthBarOption and row.showHBCheck then
-                    row.showHBCheck:SetChecked(cat.showHealthBar ~= false)
-                end
-                if cfg.hasSubtitleOption and row.showSubCheck and row.subSwatch then
-                    row.showSubCheck:SetChecked(cat.showSubtitle == true)
-                    local sc = cat.colorSubtitle or cfg.defaultSubtitle or { r = 1.0, g = 0.82, b = 0.0 }
-                    row.subSwatch.swatch:SetColorTexture(sc.r, sc.g, sc.b, 1)
-                end
+function FNC:RelayoutConfigPanel()
+    if not uiBuilt or not scrollChild then return end
+    EnsureDBReady()
+    local cardY = -96
+    local placedKeys = {}
 
-                if cfg.subCategories and cat.subCategories and row.subRows then
-                    for _, subCfg in ipairs(cfg.subCategories) do
-                        local subCat = cat.subCategories[subCfg.key]
-                        local subRow = row.subRows[subCfg.key]
-                        if subCat and subRow then
-                            subRow.subEnable:SetChecked(subCat.enabled == true)
-                            subRow.subHealthCheck:SetChecked(subCat.healthEnabled ~= false)
-                            subRow.subHealthSwatch.swatch:SetColorTexture(subCat.colorHealth.r, subCat.colorHealth.g, subCat.colorHealth.b, 1)
-                            subRow.subNameCheck:SetChecked(subCat.nameEnabled ~= false)
-                            subRow.subNameSwatch.swatch:SetColorTexture(subCat.colorName.r, subCat.colorName.g, subCat.colorName.b, 1)
-                            subRow.subTitleCheck:SetChecked(subCat.subtitleEnabled ~= false)
-                            local stc = subCat.colorSubtitle or subCfg.defaultSubtitle or { r = 1.0, g = 0.82, b = 0.0 }
-                            subRow.subTitleSwatch.swatch:SetColorTexture(stc.r, stc.g, stc.b, 1)
+    for groupIdx, group in ipairs(GetUIGroups()) do
+        if groupIdx > 1 then
+            cardY = cardY - 22
+        end
+
+        local header = FNC.headersByGroup[group.key]
+        if header then
+            header:ClearAllPoints()
+            header:SetPoint("TOPLEFT", 6, cardY)
+            cardY = cardY - 26
+        end
+
+        for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+            local norm = NormalizeCfg(cfg)
+            if norm and norm.group == group.key then
+                local card = FNC.cardsByKey[norm.key]
+                if card then
+                    placedKeys[norm.key] = true
+                    local cat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[norm.key]
+                    local totalHeight = card.baseHeight
+                    if card.advancedContainer then
+                        local expanded = cat and cat.advancedExpanded
+                        if expanded then
+                            card.advancedContainer:Show()
+                            totalHeight = card.baseHeight + card.advancedHeight
+                            if card.advancedBtn then card.advancedBtn:SetText("Hide Advanced") end
+                        else
+                            card.advancedContainer:Hide()
+                            if card.advancedBtn then card.advancedBtn:SetText("Show Advanced") end
+                        end
+                    end
+                    card:SetHeight(totalHeight)
+                    card:ClearAllPoints()
+                    card:SetPoint("TOPLEFT", 6, cardY)
+                    cardY = cardY - totalHeight - 8
+                end
+            end
+        end
+    end
+
+    for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+        local norm = NormalizeCfg(cfg)
+        if norm and not placedKeys[norm.key] then
+            local card = FNC.cardsByKey[norm.key]
+            if card then
+                card:SetHeight(card.baseHeight)
+                card:ClearAllPoints()
+                card:SetPoint("TOPLEFT", 6, cardY)
+                cardY = cardY - card.baseHeight - 8
+            end
+        end
+    end
+
+    scrollChild:SetHeight(math.abs(cardY) + 20)
+end
+
+function FNC:UpdateConfigPanelUI()
+    if not uiBuilt then return end
+    EnsureDBReady()
+
+    FNC:RelayoutConfigPanel()
+
+    local addonEnabled = ForeverNamePlateColorsDB and (ForeverNamePlateColorsDB.enabled ~= false)
+    enableCB:SetChecked(addonEnabled)
+
+    matchBtn:SetEnabled(addonEnabled)
+    matchBtn:SetAlpha(addonEnabled and 1.0 or 0.4)
+    enableAllBtn:SetEnabled(addonEnabled)
+    enableAllBtn:SetAlpha(addonEnabled and 1.0 or 0.4)
+    disableAllBtn:SetEnabled(addonEnabled)
+    disableAllBtn:SetAlpha(addonEnabled and 1.0 or 0.4)
+
+    for _, header in ipairs(FNC.sectionHeaders) do
+        header:SetAlpha(addonEnabled and 1.0 or 0.4)
+    end
+
+    for _, card in ipairs(FNC.categoryCards) do
+        local cfg = card.cfg
+        local cat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[cfg.key]
+        if cat then
+            card.enabledCB:SetChecked(cat.enabled)
+            card.healthCB:SetChecked(cat.healthEnabled)
+            card.nameCB:SetChecked(cat.nameEnabled)
+
+            if card.healthBarCB then
+                card.healthBarCB:SetChecked(cat.showHealthBar ~= false)
+            end
+            if card.subtitleCB then
+                card.subtitleCB:SetChecked(cat.showSubtitle ~= false)
+            end
+            if card.subtitleBtn and cat.colorSubtitle then
+                card.subtitleBtn.swatch:SetColorTexture(cat.colorSubtitle.r, cat.colorSubtitle.g, cat.colorSubtitle.b)
+            end
+
+            if cat.colorHealth then
+                card.healthBtn.swatch:SetColorTexture(cat.colorHealth.r, cat.colorHealth.g, cat.colorHealth.b)
+            end
+            if cat.colorName then
+                card.nameBtn.swatch:SetColorTexture(cat.colorName.r, cat.colorName.g, cat.colorName.b)
+            end
+
+            if not addonEnabled then
+                card:SetAlpha(0.4)
+                card.enabledCB:SetEnabled(false)
+                if card.advancedBtn then card.advancedBtn:SetEnabled(false) end
+                if card.healthBarCB then card.healthBarCB:SetEnabled(false) end
+                if card.subtitleCB then card.subtitleCB:SetEnabled(false) end
+                if card.subtitleBtn then card.subtitleBtn:SetEnabled(false) end
+                card.healthCB:SetEnabled(false)
+                card.nameCB:SetEnabled(false)
+                card.healthBtn:SetEnabled(false)
+                card.nameBtn:SetEnabled(false)
+                card.resetBtn:SetEnabled(false)
+                if card.subRows then
+                    for _, row in ipairs(card.subRows) do
+                        row:SetAlpha(0.4)
+                        row.enabledCB:SetEnabled(false)
+                        row.healthCB:SetEnabled(false)
+                        row.healthBtn:SetEnabled(false)
+                        row.nameCB:SetEnabled(false)
+                        row.nameBtn:SetEnabled(false)
+                        row.subtitleCB:SetEnabled(false)
+                        row.subtitleBtn:SetEnabled(false)
+                        row.resetBtn:SetEnabled(false)
+                    end
+                end
+            else
+                card:SetAlpha(1.0)
+                card.enabledCB:SetEnabled(true)
+                card.enabledCB:SetAlpha(1.0)
+
+                if not cat.enabled then
+                    if card.advancedBtn then
+                        card.advancedBtn:SetEnabled(false)
+                        card.advancedBtn:SetAlpha(0.4)
+                    end
+                    if card.healthBarCB then
+                        card.healthBarCB:SetEnabled(false)
+                        card.healthBarCB:SetAlpha(0.4)
+                    end
+                    if card.subtitleCB then
+                        card.subtitleCB:SetEnabled(false)
+                        card.subtitleCB:SetAlpha(0.4)
+                    end
+                    if card.subtitleBtn then
+                        card.subtitleBtn:SetEnabled(false)
+                        card.subtitleBtn:SetAlpha(0.4)
+                    end
+                    card.healthCB:SetEnabled(false)
+                    card.healthCB:SetAlpha(0.4)
+                    card.nameCB:SetEnabled(false)
+                    card.nameCB:SetAlpha(0.4)
+                    card.healthBtn:SetEnabled(false)
+                    card.healthBtn:SetAlpha(0.4)
+                    card.nameBtn:SetEnabled(false)
+                    card.nameBtn:SetAlpha(0.4)
+                    card.resetBtn:SetEnabled(false)
+                    card.resetBtn:SetAlpha(0.4)
+
+                    if card.subRows then
+                        for _, row in ipairs(card.subRows) do
+                            row:SetAlpha(0.4)
+                            row.enabledCB:SetEnabled(false)
+                            row.healthCB:SetEnabled(false)
+                            row.healthBtn:SetEnabled(false)
+                            row.nameCB:SetEnabled(false)
+                            row.nameBtn:SetEnabled(false)
+                            row.subtitleCB:SetEnabled(false)
+                            row.subtitleBtn:SetEnabled(false)
+                            row.resetBtn:SetEnabled(false)
+                        end
+                    end
+                else
+                    local hbShown = (cat.showHealthBar ~= false)
+                    local subShown = (cat.showSubtitle ~= false)
+
+                    if card.advancedBtn then
+                        card.advancedBtn:SetEnabled(true)
+                        card.advancedBtn:SetAlpha(1.0)
+                    end
+
+                    if card.healthBarCB then
+                        card.healthBarCB:SetEnabled(true)
+                        card.healthBarCB:SetAlpha(1.0)
+                    end
+
+                    if card.subtitleCB then
+                        card.subtitleCB:SetEnabled(true)
+                        card.subtitleCB:SetAlpha(1.0)
+                    end
+
+                    if card.subtitleBtn then
+                        card.subtitleBtn:SetEnabled(subShown)
+                        card.subtitleBtn:SetAlpha(subShown and 1.0 or 0.4)
+                    end
+
+                    card.nameCB:SetEnabled(true)
+                    card.nameCB:SetAlpha(1.0)
+                    card.nameBtn:SetEnabled(cat.nameEnabled)
+                    card.nameBtn:SetAlpha(cat.nameEnabled and 1.0 or 0.4)
+
+                    card.healthCB:SetEnabled(hbShown)
+                    card.healthCB:SetAlpha(hbShown and 1.0 or 0.4)
+                    local hbBtnActive = hbShown and cat.healthEnabled
+                    card.healthBtn:SetEnabled(hbBtnActive)
+                    card.healthBtn:SetAlpha(hbBtnActive and 1.0 or 0.4)
+
+                    card.resetBtn:SetEnabled(true)
+                    card.resetBtn:SetAlpha(1.0)
+
+                    if card.subRows and cat.subCategories then
+                        for _, row in ipairs(card.subRows) do
+                            local subCfg = row.subCfg
+                            local subCat = cat.subCategories[subCfg.key]
+                            if subCat then
+                                row:SetAlpha(1.0)
+                                row.enabledCB:SetChecked(subCat.enabled)
+                                row.healthCB:SetChecked(subCat.healthEnabled)
+                                row.nameCB:SetChecked(subCat.nameEnabled)
+                                row.subtitleCB:SetChecked(subCat.subtitleEnabled ~= false)
+
+                                if subCat.colorHealth then
+                                    row.healthBtn.swatch:SetColorTexture(subCat.colorHealth.r, subCat.colorHealth.g, subCat.colorHealth.b)
+                                end
+                                if subCat.colorName then
+                                    row.nameBtn.swatch:SetColorTexture(subCat.colorName.r, subCat.colorName.g, subCat.colorName.b)
+                                end
+                                if subCat.colorSubtitle then
+                                    row.subtitleBtn.swatch:SetColorTexture(subCat.colorSubtitle.r, subCat.colorSubtitle.g, subCat.colorSubtitle.b)
+                                end
+
+                                row.enabledCB:SetEnabled(true)
+                                row.enabledCB:SetAlpha(1.0)
+
+                                if not subCat.enabled then
+                                    row.healthCB:SetEnabled(false)
+                                    row.healthCB:SetAlpha(0.4)
+                                    row.healthBtn:SetEnabled(false)
+                                    row.healthBtn:SetAlpha(0.4)
+                                    row.nameCB:SetEnabled(false)
+                                    row.nameCB:SetAlpha(0.4)
+                                    row.nameBtn:SetEnabled(false)
+                                    row.nameBtn:SetAlpha(0.4)
+                                    row.subtitleCB:SetEnabled(false)
+                                    row.subtitleCB:SetAlpha(0.4)
+                                    row.subtitleBtn:SetEnabled(false)
+                                    row.subtitleBtn:SetAlpha(0.4)
+                                    row.resetBtn:SetEnabled(false)
+                                    row.resetBtn:SetAlpha(0.4)
+                                else
+                                    row.healthCB:SetEnabled(hbShown)
+                                    row.healthCB:SetAlpha(hbShown and 1.0 or 0.4)
+                                    local subHbActive = hbShown and subCat.healthEnabled
+                                    row.healthBtn:SetEnabled(subHbActive)
+                                    row.healthBtn:SetAlpha(subHbActive and 1.0 or 0.4)
+
+                                    row.nameCB:SetEnabled(true)
+                                    row.nameCB:SetAlpha(1.0)
+                                    row.nameBtn:SetEnabled(subCat.nameEnabled)
+                                    row.nameBtn:SetAlpha(subCat.nameEnabled and 1.0 or 0.4)
+
+                                    row.subtitleCB:SetEnabled(subShown)
+                                    row.subtitleCB:SetAlpha(subShown and 1.0 or 0.4)
+                                    local subTagActive = subShown and (subCat.subtitleEnabled ~= false)
+                                    row.subtitleBtn:SetEnabled(subTagActive)
+                                    row.subtitleBtn:SetAlpha(subTagActive and 1.0 or 0.4)
+
+                                    row.resetBtn:SetEnabled(true)
+                                    row.resetBtn:SetAlpha(1.0)
+                                end
+                            end
                         end
                     end
                 end
@@ -536,15 +955,78 @@ function FNC:UpdateConfigPanelUI()
 end
 
 configFrame:SetScript("OnShow", function()
+    BuildConfigPanelUI()
     FNC:UpdateConfigPanelUI()
-    RelayoutOptionsPanel()
 end)
 
--- Register with modern Settings API (Classic Era 1.15+) or legacy InterfaceOptions
 if Settings and Settings.RegisterCanvasLayoutCategory then
-    local category = Settings.RegisterCanvasLayoutCategory(configFrame, configFrame.name)
+    local category, layout = Settings.RegisterCanvasLayoutCategory(configFrame, "ForeverNamePlateColors")
     Settings.RegisterAddOnCategory(category)
     FNC.settingsCategory = category
 else
     InterfaceOptions_AddCategory(configFrame)
+end
+
+function FNC:OpenColorPicker(catKey, channel, swatchTexture, subKey)
+    EnsureDBReady()
+    local parentCat = ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[catKey]
+    local cat = subKey and (parentCat and parentCat.subCategories and parentCat.subCategories[subKey]) or parentCat
+    if not cat then return end
+    local colorField = (channel == "health") and "colorHealth" or ((channel == "name") and "colorName" or "colorSubtitle")
+    if not cat[colorField] then
+        cat[colorField] = { r = 1, g = 1, b = 1 }
+    end
+
+    local col = cat[colorField]
+    local prevR, prevG, prevB = col.r, col.g, col.b
+
+    local function ApplyColor(r, g, b)
+        col.r, col.g, col.b = r, g, b
+        if swatchTexture then
+            swatchTexture:SetColorTexture(r, g, b)
+        end
+        FNC:UpdateConfigPanelUI()
+        if FNC.RefreshAllPlates then FNC:RefreshAllPlates() end
+    end
+
+    if ColorPickerFrame.SetupColorPickerAndShow then
+        local info = {
+            r = col.r,
+            g = col.g,
+            b = col.b,
+            swatchFunc = function()
+                local r, g, b = ColorPickerFrame:GetColorRGB()
+                ApplyColor(r, g, b)
+            end,
+            func = function()
+                local r, g, b = ColorPickerFrame:GetColorRGB()
+                ApplyColor(r, g, b)
+                ColorPickerFrame:Hide()
+            end,
+            cancelFunc = function()
+                ApplyColor(prevR, prevG, prevB)
+                ColorPickerFrame:Hide()
+            end,
+            hasOpacity = false,
+        }
+        ColorPickerFrame:SetupColorPickerAndShow(info)
+    else
+        ColorPickerFrame:SetColorRGB(col.r, col.g, col.b)
+        ColorPickerFrame.hasOpacity = false
+        ColorPickerFrame.swatchFunc = function()
+            local r, g, b = ColorPickerFrame:GetColorRGB()
+            ApplyColor(r, g, b)
+        end
+        ColorPickerFrame.func = function()
+            local r, g, b = ColorPickerFrame:GetColorRGB()
+            ApplyColor(r, g, b)
+            ColorPickerFrame:Hide()
+        end
+        ColorPickerFrame.cancelFunc = function()
+            ApplyColor(prevR, prevG, prevB)
+            ColorPickerFrame:Hide()
+        end
+        ColorPickerFrame:Hide()
+        ColorPickerFrame:Show()
+    end
 end
