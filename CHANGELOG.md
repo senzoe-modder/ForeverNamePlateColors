@@ -3,6 +3,11 @@
 ***
 
 # v1.4.10
+* Fixed more bugs with quest npcs/mobs
+
+***
+
+# v1.4.10
 * Fixed bug where quest mobs stay tracked as quest mobs when their quest objective is complete
 
 ***
