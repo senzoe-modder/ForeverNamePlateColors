@@ -7,8 +7,11 @@ local addonName, FNC = ...
 
 -- Active Quest Log Cache (Blizzard API fallback when Questie is not installed)
 local activeQuestTitles = {}
+local completedQuestTitles = {}
 local incompleteObjectiveTargets = {}
+local completedObjectiveTargets = {}
 local turnInTargets = {}
+local completedTurnInNPCs = {}
 local questTextCorpus = ""
 local questCacheGeneration = 0
 
@@ -69,7 +72,7 @@ local function GetNpcIDFromUnit(unit)
     return nil
 end
 
-local function AddTurnInNPC(rawTarget)
+local function AddTurnInNPC(rawTarget, isQuestComplete)
     if not IsSafeString(rawTarget) then return end
     local npc = rawTarget:match("^([^%.%!%?,\r\n]+)") or rawTarget
     npc = npc:lower()
@@ -88,10 +91,13 @@ local function AddTurnInNPC(rawTarget)
     npc = npc:match("^%s*(.-)%s*$")
     if npc and npc ~= "" and #npc >= 3 then
         turnInTargets[npc] = true
+        if isQuestComplete then
+            completedTurnInNPCs[npc] = true
+        end
     end
 end
 
-local function ScanTextForTurnInNPCs(text)
+local function ScanTextForTurnInNPCs(text, isQuestComplete)
     if not IsSafeString(text) then return end
     local lower = CleanTooltipText(text):lower()
     if lower == "" then return end
@@ -115,7 +121,7 @@ local function ScanTextForTurnInNPCs(text)
 
     for _, pat in ipairs(patterns) do
         for match in lower:gmatch(pat) do
-            AddTurnInNPC(match)
+            AddTurnInNPC(match, isQuestComplete)
         end
     end
 end
@@ -140,8 +146,11 @@ end
 function FNC:RebuildQuestCache()
     questCacheGeneration = questCacheGeneration + 1
     wipe(activeQuestTitles)
+    wipe(completedQuestTitles)
     wipe(incompleteObjectiveTargets)
+    wipe(completedObjectiveTargets)
     wipe(turnInTargets)
+    wipe(completedTurnInNPCs)
     questTextCorpus = ""
 
     if not GetNumQuestLogEntries or not GetQuestLogTitle then return end
@@ -153,9 +162,13 @@ function FNC:RebuildQuestCache()
     for i = 1, numEntries do
         local title, _, _, isHeader, _, isComplete = GetQuestLogTitle(i)
         if IsSafeString(title) and not isHeader then
+            local questReadyToTurnIn = (isComplete == 1) or (isComplete == true)
             local cleanTitle = CleanTooltipText(title):gsub("^%[.-%]%s*", ""):gsub("%s*%(complete%)%s*$", ""):lower()
             if cleanTitle ~= "" then
                 activeQuestTitles[cleanTitle] = true
+                if questReadyToTurnIn then
+                    completedQuestTitles[cleanTitle] = true
+                end
                 table.insert(corpusParts, cleanTitle)
             end
 
@@ -167,17 +180,23 @@ function FNC:RebuildQuestCache()
                         local cleanDesc = CleanTooltipText(desc)
                         table.insert(corpusParts, cleanDesc:lower())
 
-                        if not isDone and isComplete ~= 1 then
-                            local target = cleanDesc:match("^([^:]+):%s*%d+%s*/%s*%d+")
-                            if target then
-                                target = target:gsub("%s+slain$", ""):gsub("%s+killed$", ""):gsub("%s+collected$", ""):match("^%s*(.-)%s*$"):lower()
-                                if target ~= "" then
-                                    incompleteObjectiveTargets[target] = true
-                                end
+                        local target = cleanDesc:match("^([^:]+):%s*%d+%s*/%s*%d+")
+                        if target then
+                            target = target:gsub("%s+slain$", ""):gsub("%s+killed$", ""):gsub("%s+collected$", ""):match("^%s*(.-)%s*$"):lower()
+                        end
+                        local curStr, reqStr = cleanDesc:match("(%d+)%s*/%s*(%d+)")
+                        local curNum, reqNum = tonumber(curStr), tonumber(reqStr)
+                        local objComplete = isDone or (isComplete == 1) or (curNum and reqNum and reqNum > 0 and curNum >= reqNum)
+
+                        if target and target ~= "" then
+                            if objComplete then
+                                completedObjectiveTargets[target] = true
+                            else
+                                incompleteObjectiveTargets[target] = true
                             end
                         end
 
-                        ScanTextForTurnInNPCs(cleanDesc)
+                        ScanTextForTurnInNPCs(cleanDesc, questReadyToTurnIn)
                     end
                 end
             end
@@ -188,18 +207,18 @@ function FNC:RebuildQuestCache()
                     local questDescription, questObjectives = GetQuestLogQuestText()
                     if IsSafeString(questObjectives) then
                         table.insert(corpusParts, CleanTooltipText(questObjectives):lower())
-                        ScanTextForTurnInNPCs(questObjectives)
+                        ScanTextForTurnInNPCs(questObjectives, questReadyToTurnIn)
                     end
                     if IsSafeString(questDescription) then
                         table.insert(corpusParts, CleanTooltipText(questDescription):lower())
-                        ScanTextForTurnInNPCs(questDescription)
+                        ScanTextForTurnInNPCs(questDescription, questReadyToTurnIn)
                     end
                 end
                 if GetQuestLogCompletionText then
                     local completionText = GetQuestLogCompletionText()
                     if IsSafeString(completionText) then
                         table.insert(corpusParts, CleanTooltipText(completionText):lower())
-                        ScanTextForTurnInNPCs(completionText)
+                        ScanTextForTurnInNPCs(completionText, questReadyToTurnIn)
                     end
                 end
             end
@@ -465,6 +484,19 @@ local function HasVisibleQuestBadge(uf)
     return false
 end
 
+local function MatchesCompletedTurnInNPCName(lowerName)
+    if not IsSafeString(lowerName) then return false end
+    if completedTurnInNPCs[lowerName] then
+        return true
+    end
+    for cachedNPC in pairs(completedTurnInNPCs) do
+        if #cachedNPC >= 4 and lowerName:find(cachedNPC, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
 local function MatchesTurnInNPCName(lowerName)
     if turnInTargets[lowerName] then
         return true
@@ -480,14 +512,107 @@ local function MatchesTurnInNPCName(lowerName)
     return false
 end
 
+local function IsMobPortionCompleted(unit, lowerName, lines, count)
+    if not IsSafeString(unit) or not UnitCanAttack("player", unit) then
+        return false
+    end
+
+    local hasIncompleteSignal = false
+    if lowerName and incompleteObjectiveTargets[lowerName] then
+        hasIncompleteSignal = true
+    end
+
+    if lines and count and count > 0 then
+        for i = 1, count do
+            local lineText = lines[i]
+            if IsSafeString(lineText) then
+                local lowerLine = lineText:lower()
+                if not lowerLine:find("^level") and not lowerLine:find("^lvl") then
+                    local curStr, reqStr = lineText:match("(%d+)%s*/%s*(%d+)")
+                    if curStr and reqStr then
+                        local curNum, reqNum = tonumber(curStr), tonumber(reqStr)
+                        if curNum and reqNum and reqNum > 0 then
+                            if curNum < reqNum then
+                                hasIncompleteSignal = true
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    if hasIncompleteSignal then
+        return false
+    end
+
+    if lowerName and completedObjectiveTargets[lowerName] then
+        return true
+    end
+
+    if lines and count and count > 0 then
+        for i = 1, count do
+            local lineText = lines[i]
+            if IsSafeString(lineText) then
+                local lowerLine = lineText:lower()
+                if not lowerLine:find("^level") and not lowerLine:find("^lvl") then
+                    local curStr, reqStr = lineText:match("(%d+)%s*/%s*(%d+)")
+                    if curStr and reqStr then
+                        local curNum, reqNum = tonumber(curStr), tonumber(reqStr)
+                        if curNum and reqNum and reqNum > 0 and curNum >= reqNum then
+                            return true
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    return false
+end
+
+local function HasCompletedQuestTurnInForNPC(lowerName, lines, count)
+    if lowerName and MatchesCompletedTurnInNPCName(lowerName) then
+        return true
+    end
+    if lines and count and count > 0 then
+        for i = 1, count do
+            local lineText = lines[i]
+            if IsSafeString(lineText) then
+                local cleanedLower = lineText:gsub("%s*%(complete%)%s*$", ""):lower()
+                if completedQuestTitles[cleanedLower] then
+                    return true
+                end
+                if lineText:lower():find("(complete)", 1, true) or lineText:lower():find("ready to turn in", 1, true) then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 local function CheckActiveQuestUnitInternal(unit, uf)
     if not IsSafeString(unit) or UnitIsPlayer(unit) then return false end
     if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then
         return false
     end
 
+    local canAttack = UnitCanAttack and UnitCanAttack("player", unit) or false
+
     -- If another player/party has tagged this mob, revert to Blizzard default tapped color
-    if UnitCanAttack("player", unit) and UnitIsTapDenied and UnitIsTapDenied(unit) then
+    if canAttack and UnitIsTapDenied and UnitIsTapDenied(unit) then
+        return false
+    end
+
+    -- Non-attackable NPCs: only show up as a quest NPC if there is a completed quest to hand into them
+    if not canAttack then
+        local unitName = UnitName(unit)
+        local lowerName = IsSafeString(unitName) and unitName:lower() or nil
+        local lines, count = GetUnitTooltipLines(unit)
+        if HasCompletedQuestTurnInForNPC(lowerName, lines, count) then
+            return true
+        end
         return false
     end
 
@@ -499,31 +624,20 @@ local function CheckActiveQuestUnitInternal(unit, uf)
         return true
     end
 
-    -- 2. Questie live NPC ID lookup (covers turn-in '?' NPCs and active quest mobs via GUID npcID)
-    local npcID = GetNpcIDFromUnit(unit)
-    if npcID and IsMatchedInQuestieLiveTooltips(npcID) then
-        return true
-    end
-
-    -- 3. Standalone fallback: match unit name against cached quest objective targets & turn-in NPCs
     local unitName = UnitName(unit)
-    if IsSafeString(unitName) then
-        local lowerName = unitName:lower()
-        if incompleteObjectiveTargets[lowerName] or MatchesTurnInNPCName(lowerName) then
-            return true
-        end
+    local lowerName = IsSafeString(unitName) and unitName:lower() or nil
+    local lines, count = GetUnitTooltipLines(unit)
+
+    -- Check if this attackable mob's portion of the quest is already complete
+    if IsMobPortionCompleted(unit, lowerName, lines, count) then
+        return false
     end
 
-    -- 4. Scan tooltip lines 2..NumLines() for active/completed quest titles or incomplete objective counters
-    local lines, count = GetUnitTooltipLines(unit)
+    -- Check tooltip lines 2..NumLines() for incomplete objective counters or active quest titles
     for i = 1, count do
         local lineText = lines[i]
         if IsSafeString(lineText) then
             local lowerLine = lineText:gsub("%s*%(complete%)%s*$", ""):lower()
-            if activeQuestTitles[lowerLine] then
-                return true
-            end
-
             if not lowerLine:find("^level") and not lowerLine:find("^lvl") then
                 local curStr, reqStr = lineText:match("(%d+)%s*/%s*(%d+)")
                 if curStr and reqStr then
@@ -533,6 +647,22 @@ local function CheckActiveQuestUnitInternal(unit, uf)
                     end
                 end
             end
+            if activeQuestTitles[lowerLine] and not (lowerName and completedObjectiveTargets[lowerName]) then
+                return true
+            end
+        end
+    end
+
+    -- 2. Questie live NPC ID lookup (covers turn-in '?' NPCs and active quest mobs via GUID npcID)
+    local npcID = GetNpcIDFromUnit(unit)
+    if npcID and IsMatchedInQuestieLiveTooltips(npcID) then
+        return true
+    end
+
+    -- 3. Standalone fallback: match unit name against cached quest objective targets & turn-in NPCs
+    if lowerName then
+        if incompleteObjectiveTargets[lowerName] or MatchesTurnInNPCName(lowerName) then
+            return true
         end
     end
 
