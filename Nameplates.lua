@@ -23,19 +23,26 @@ local cachedExtras = setmetatable({}, { __mode = "k" })
 local pendingUnitFrames = setmetatable({}, { __mode = "k" })
 local pendingFlushScheduled = false
 
+local flushBatchUFs = {}
+local flushBatchUnits = {}
+
 local function FlushPendingUnitFrames()
     pendingFlushScheduled = false
     FNC.updatePassGeneration = (FNC.updatePassGeneration or 0) + 1
-    local batch = {}
+    local n = 0
     for uf, unit in pairs(pendingUnitFrames) do
         pendingUnitFrames[uf] = nil
-        batch[#batch + 1] = { uf = uf, unit = unit }
+        n = n + 1
+        flushBatchUFs[n] = uf
+        flushBatchUnits[n] = unit
     end
-    for i = 1, #batch do
-        local item = batch[i]
-        local uf = item.uf
+    for i = 1, n do
+        local uf = flushBatchUFs[i]
+        local unit = flushBatchUnits[i]
+        flushBatchUFs[i] = nil
+        flushBatchUnits[i] = nil
         if uf and not (uf.IsForbidden and uf:IsForbidden()) then
-            FNC:UpdateUnitFrameNow(uf, item.unit)
+            FNC:UpdateUnitFrameNow(uf, unit)
         end
     end
 end
@@ -334,11 +341,20 @@ local function ApplySubtitle(uf, nameFS, showSubtitle, subtitleText, color)
 
     local fontPath, fontSize, fontFlags = nameFS:GetFont()
     if IsSafeString(fontPath) and IsSafeNumber(fontSize) and fontSize > 0 then
-        subFS:SetFont(fontPath, math.max(fontSize - 2, 8), fontFlags or "")
+        local targetSize = math.max(fontSize - 2, 8)
+        local flagsStr = fontFlags or ""
+        local fontKey = fontPath .. "|" .. tostring(targetSize) .. "|" .. flagsStr
+        if subFS._fncFontKey ~= fontKey then
+            subFS._fncFontKey = fontKey
+            subFS:SetFont(fontPath, targetSize, flagsStr)
+        end
     end
 
-    subFS:ClearAllPoints()
-    subFS:SetPoint("TOP", nameFS, "BOTTOM", 0, -1)
+    if not subFS._fncAnchored then
+        subFS._fncAnchored = true
+        subFS:ClearAllPoints()
+        subFS:SetPoint("TOP", nameFS, "BOTTOM", 0, -1)
+    end
     subFS:SetText(subtitleText)
     if color then
         subFS:SetTextColor(color.r, color.g, color.b, 1)
@@ -552,6 +568,8 @@ function FNC:UpdateUnitFrameNow(uf, unit)
         if activeSubCat and activeSubCat.nameEnabled and activeSubCat.colorName then
             resolvedNameColor = activeSubCat.colorName
         elseif matchedCat.nameEnabled and matchedCat.colorName then
+            resolvedNameColor = matchedCat.colorName
+        elseif matchedCfg.key == "ActiveQuestUnit" and matchedCat.colorName then
             resolvedNameColor = matchedCat.colorName
         elseif matchedCfg.key == "FriendlyMinion" and matchedCfg.defaultName then
             resolvedNameColor = matchedCfg.defaultName

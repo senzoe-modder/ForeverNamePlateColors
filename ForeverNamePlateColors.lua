@@ -71,6 +71,8 @@ mainFrame:RegisterEvent("UNIT_NAME_UPDATE")
 mainFrame:RegisterEvent("UNIT_LEVEL")
 mainFrame:RegisterEvent("UNIT_FACTION")
 mainFrame:RegisterEvent("UNIT_FLAGS")
+mainFrame:RegisterEvent("UNIT_HEALTH")
+mainFrame:RegisterEvent("UNIT_COMBAT")
 mainFrame:RegisterEvent("UNIT_TARGET")
 mainFrame:RegisterEvent("UNIT_THREAT_LIST_UPDATE")
 mainFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -91,23 +93,59 @@ mainFrame:SetScript("OnEvent", function(self, event, arg1)
         if FNC.RebuildQuestCache then FNC:RebuildQuestCache() end
         FNC:SyncAllCVars()
         FNC:RefreshAllPlates()
+        if QuestieLoader and FNC.IsQuestieReady and not FNC:IsQuestieReady() then
+            local attempts = 0
+            local function PollQuestieInit()
+                attempts = attempts + 1
+                if FNC.IsQuestieReady and FNC:IsQuestieReady() then
+                    if FNC.RebuildQuestCache then FNC:RebuildQuestCache() end
+                    FNC:RefreshAllPlates()
+                elseif attempts < 20 then
+                    C_Timer.After(0.5, PollQuestieInit)
+                end
+            end
+            C_Timer.After(0.5, PollQuestieInit)
+        end
     elseif event == "NAME_PLATE_UNIT_ADDED"
         or event == "UNIT_NAME_UPDATE"
         or event == "UNIT_LEVEL"
         or event == "UNIT_FACTION"
         or event == "UNIT_FLAGS"
+        or event == "UNIT_HEALTH"
+        or event == "UNIT_COMBAT"
         or event == "UNIT_TARGET"
         or event == "UNIT_THREAT_LIST_UPDATE" then
         local unit = arg1
-        if type(unit) == "string" and unit:match("^nameplate%d+$") then
-            local plate = C_NamePlate.GetNamePlateForUnit(unit)
-            if plate then
-                local uf = plate.UnitFrame or plate.unitFrame
-                if uf and not uf:IsForbidden() then
-                    if FNC.QueueUnitFrameUpdate then
-                        FNC:QueueUnitFrameUpdate(uf, unit)
-                    else
-                        FNC:UpdateUnitFrame(uf, unit)
+        if type(unit) == "string" then
+            if unit:match("^nameplate%d+$") then
+                local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit(unit)
+                if plate then
+                    local uf = plate.UnitFrame or plate.unitFrame
+                    if uf and not uf:IsForbidden() then
+                        if FNC.QueueUnitFrameUpdate then
+                            FNC:QueueUnitFrameUpdate(uf, unit)
+                        else
+                            FNC:UpdateUnitFrame(uf, unit)
+                        end
+                    end
+                end
+            elseif (event == "UNIT_TARGET" or event == "UNIT_THREAT_LIST_UPDATE" or event == "UNIT_COMBAT")
+                and (unit == "player" or unit == "pet" or unit:match("^party%d+$") or unit:match("^raid%d+$") or unit:match("^partypet%d+$") or unit:match("^raidpet%d+$")) then
+                local targetUnit = unit .. "target"
+                if UnitExists and UnitExists(targetUnit) and C_NamePlate and C_NamePlate.GetNamePlates then
+                    for _, plate in ipairs(C_NamePlate.GetNamePlates()) do
+                        local uf = plate.UnitFrame or plate.unitFrame
+                        if uf and not uf:IsForbidden() then
+                            local plateUnit = uf.displayedUnit or uf.unit
+                            if type(plateUnit) == "string" and plateUnit:match("^nameplate%d+$") and UnitIsUnit(plateUnit, targetUnit) then
+                                if FNC.QueueUnitFrameUpdate then
+                                    FNC:QueueUnitFrameUpdate(uf, plateUnit)
+                                else
+                                    FNC:UpdateUnitFrame(uf, plateUnit)
+                                end
+                                break
+                            end
+                        end
                     end
                 end
             end
@@ -144,6 +182,34 @@ SlashCmdList["FOREVERNAMEPLATECOLORS"] = function(msg)
             print(FormatChat("Recorded errors (" .. #log .. "):"))
             for i, entry in ipairs(log) do
                 print("|cFFFF5555[" .. i .. "]|r " .. entry)
+            end
+        end
+    elseif msg == "debug" then
+        local unit = UnitExists("target") and "target" or (UnitExists("mouseover") and "mouseover" or nil)
+        if not unit then
+            print(FormatChat("Target or mouseover a quest mob first, then run |cFFFFFFFF/fnc debug|r."))
+        else
+            local uname = UnitName(unit) or "?"
+            local canAtk = UnitCanAttack and UnitCanAttack("player", unit) or false
+            local isEn = UnitIsEnemy and UnitIsEnemy("player", unit) or false
+            local isTap = UnitIsTapDenied and UnitIsTapDenied(unit) or false
+            local isTag = FNC.IsTaggedByPlayerOrParty and FNC:IsTaggedByPlayerOrParty(unit) or false
+            local isQuest = FNC.IsActiveQuestUnit and FNC:IsActiveQuestUnit(unit, nil) or false
+            local matchedKey = "NONE"
+            local isPlayer = UnitIsPlayer(unit)
+            local isSub = isPlayer and FNC.IsInMySubgroup and FNC.IsInMySubgroup(unit) or false
+            local isRaid = isPlayer and (UnitInRaid(unit) ~= nil) or false
+            for _, cfg in ipairs(FNC.CATEGORY_CONFIG or {}) do
+                local cat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories[cfg.key]
+                if cat and cat.enabled and cfg.match(unit, isSub, isRaid, isPlayer, isEn, canAtk, nil) then
+                    matchedKey = cfg.key
+                    break
+                end
+            end
+            print(FormatChat(string.format("Unit=%s Name=%s canAtk=%s isEnemy=%s tapDenied=%s tagged=%s isQuest=%s match=%s",
+                tostring(unit), tostring(uname), tostring(canAtk), tostring(isEn), tostring(isTap), tostring(isTag), tostring(isQuest), tostring(matchedKey))))
+            if FNC.DumpQuestDebug then
+                FNC:DumpQuestDebug(unit)
             end
         end
     elseif msg == "clearerrors" then
