@@ -2,6 +2,11 @@
 
 ***
 
+# v1.4.10
+* Fixed bug where quest mobs stay tracked as quest mobs when their quest objective is complete
+
+***
+
 # v1.4.9
 * (BIG) Improvements to performance (especially in crowded cities)
 
