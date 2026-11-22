@@ -2,7 +2,7 @@
 
 ***
 
-# v1.4.10
+# v1.4.11
 * Fixed more bugs with quest npcs/mobs
 
 ***
