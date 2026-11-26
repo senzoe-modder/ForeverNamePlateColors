@@ -2,6 +2,14 @@
 
 ***
 
+# v1.4.12
+* Fixed background errors while in dungeon
+* Small perfromance improvements
+
+Note: Sorry I haven't been too active. Been busy!
+
+***
+
 # v1.4.11
 * Fixed more bugs with quest npcs/mobs
 
