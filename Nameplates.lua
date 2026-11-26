@@ -42,14 +42,16 @@ local function FlushPendingUnitFrames()
         flushBatchUFs[i] = nil
         flushBatchUnits[i] = nil
         if uf and not (uf.IsForbidden and uf:IsForbidden()) then
-            FNC:UpdateUnitFrameNow(uf, unit)
+            local liveUnit = uf.displayedUnit or uf.unit or unit
+            FNC:UpdateUnitFrameNow(uf, liveUnit)
         end
     end
 end
 
 local function ScheduleUnitFrameUpdate(uf, unit)
     if not uf or (uf.IsForbidden and uf:IsForbidden()) then return end
-    if uf._fncUpdating then return end
+    if uf._fncUpdating or uf._fncUpdatingBlizzardName then return end
+    if pendingUnitFrames[uf] then return end
     pendingUnitFrames[uf] = unit or uf.displayedUnit or uf.unit or true
     if not pendingFlushScheduled then
         pendingFlushScheduled = true
@@ -96,6 +98,13 @@ local function IsSafeNumber(val)
     return true
 end
 
+local function GetSafeGuid(unit)
+    if not IsSafeString(unit) or not UnitGUID then return "" end
+    local ok, guid = pcall(UnitGUID, unit)
+    if not ok or not IsSafeString(guid) then return "" end
+    return guid
+end
+
 local function GetCVarBoolSafe(cvarName)
     if type(cvarName) ~= "string" then return false end
     if C_CVar and C_CVar.GetCVarBool then
@@ -117,15 +126,28 @@ local function GetCVarBoolSafe(cvarName)
     return tostring(raw or "0") == "1"
 end
 
--- Resolve Blizzard class color for player units when Blizzard's class color setting is active
+-- Cache class color setting per pass so we don't query CVars hundreds of times when spinning in Stormwind/Orgrimmar
+local cachedClassColorPass = -1
+local cachedClassColorAll = false
+local cachedClassColorFriendly = false
+local cachedClassColorEnemy = false
+
 local function GetBlizzardClassColorForUnit(unit, isEnemy, canAttack)
     if not IsSafeString(unit) or not UnitIsPlayer or not UnitIsPlayer(unit) then
         return nil
     end
 
-    local classColorEnabled = GetCVarBoolSafe("ShowClassColorInNameplate")
-        or ((not isEnemy and not canAttack) and GetCVarBoolSafe("ShowClassColorInFriendlyNameplate"))
-        or ((isEnemy or canAttack) and GetCVarBoolSafe("ShowClassColorInEnemyNameplate"))
+    local pass = FNC.updatePassGeneration or 0
+    if cachedClassColorPass ~= pass then
+        cachedClassColorPass = pass
+        cachedClassColorAll = GetCVarBoolSafe("ShowClassColorInNameplate")
+        cachedClassColorFriendly = GetCVarBoolSafe("ShowClassColorInFriendlyNameplate")
+        cachedClassColorEnemy = GetCVarBoolSafe("ShowClassColorInEnemyNameplate")
+    end
+
+    local classColorEnabled = cachedClassColorAll
+        or ((not isEnemy and not canAttack) and cachedClassColorFriendly)
+        or ((isEnemy or canAttack) and cachedClassColorEnemy)
 
     if not classColorEnabled then
         return nil
@@ -208,7 +230,6 @@ local function GetUnitFrameHealthBar(uf)
 end
 
 -- Collect extra FontStrings / health / level / border regions & children once per UnitFrame
--- (never touches castBar or powerBar, which are separate StatusBars on player plates)
 local function CollectFrameTreeExtrasInto(frame, nameFS, outList, depth)
     if not frame or depth > 4 or (frame.IsForbidden and frame:IsForbidden()) then return end
 
@@ -371,17 +392,23 @@ local function EnsureNameFontStringHooked(uf, nameFS)
     if not nameFS or hookedWidgets[nameFS] then return end
     hookedWidgets[nameFS] = true
 
-    local function ReapplyOnBlizzardChange()
-        if uf._fncUpdating then return end
+    hooksecurefunc(nameFS, "SetTextColor", function()
+        if uf._fncUpdating or uf._fncUpdatingBlizzardName then return end
         if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
         local unit = uf.displayedUnit or uf.unit
         if IsSafeString(unit) and unit:match("^nameplate%d+$") then
             ScheduleUnitFrameUpdate(uf, unit)
         end
-    end
+    end)
 
-    hooksecurefunc(nameFS, "SetTextColor", ReapplyOnBlizzardChange)
-    hooksecurefunc(nameFS, "SetText", ReapplyOnBlizzardChange)
+    hooksecurefunc(nameFS, "SetText", function()
+        if uf._fncUpdating or uf._fncUpdatingBlizzardName then return end
+        if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
+        local unit = uf.displayedUnit or uf.unit
+        if IsSafeString(unit) and unit:match("^nameplate%d+$") then
+            ScheduleUnitFrameUpdate(uf, unit)
+        end
+    end)
 end
 
 -- Hook Blizzard's CompactUnitFrame updates once per nameplate frame
@@ -403,7 +430,7 @@ local function HookUnitFrame(uf)
     if hb and not hookedWidgets[hb] then
         hookedWidgets[hb] = true
         hooksecurefunc(hb, "SetStatusBarColor", function()
-            if uf._fncUpdating then return end
+            if uf._fncUpdating or uf._fncUpdatingBlizzardName then return end
             if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
             local unit = uf.displayedUnit or uf.unit
             if IsSafeString(unit) and unit:match("^nameplate%d+$") then
@@ -415,7 +442,7 @@ local function HookUnitFrame(uf)
     if uf.HealthBarsContainer and uf.HealthBarsContainer.Show and not hookedWidgets[uf.HealthBarsContainer] then
         hookedWidgets[uf.HealthBarsContainer] = true
         hooksecurefunc(uf.HealthBarsContainer, "Show", function()
-            if uf._fncUpdating then return end
+            if uf._fncUpdating or uf._fncUpdatingBlizzardName then return end
             if not ForeverNamePlateColorsDB or not ForeverNamePlateColorsDB.enabled then return end
             local unit = uf.displayedUnit or uf.unit
             if IsSafeString(unit) and unit:match("^nameplate%d+$") then
@@ -446,6 +473,10 @@ function FNC:ResetUnitFrame(uf)
             local orig = defaultNameColors[nameFS]
             if orig then
                 nameFS:SetTextColor(orig.r, orig.g, orig.b, orig.a or 1)
+            elseif CompactUnitFrame_UpdateName and not uf._fncUpdatingBlizzardName then
+                uf._fncUpdatingBlizzardName = true
+                pcall(CompactUnitFrame_UpdateName, uf)
+                uf._fncUpdatingBlizzardName = false
             end
         end
     end
@@ -479,7 +510,7 @@ function FNC:UpdateUnitFrameNow(uf, unit)
     local isUnitPlayer = UnitIsPlayer(unit)
     local isEnemy = UnitIsEnemy("player", unit)
     local canAttack = UnitCanAttack("player", unit)
-    local isSubgroup = isUnitPlayer and FNC.IsInMySubgroup(unit) or false
+    local isSubgroup = (isUnitPlayer and FNC.IsInMySubgroup) and FNC.IsInMySubgroup(unit) or false
     local isRaidMember = isUnitPlayer and (UnitInRaid(unit) ~= nil) or false
     local isTapDenied = canAttack and (not isUnitPlayer) and UnitIsTapDenied and UnitIsTapDenied(unit)
 
@@ -621,7 +652,7 @@ function FNC:UpdateUnitFrame(uf, unit)
 end
 
 local function OnCompactUnitFrameHook(uf)
-    if not uf or uf._fncUpdating or (uf.IsForbidden and uf:IsForbidden()) then return end
+    if not uf or uf._fncUpdating or uf._fncUpdatingBlizzardName or (uf.IsForbidden and uf:IsForbidden()) then return end
     local unit = uf.displayedUnit or uf.unit
     if IsSafeString(unit) and unit:match("^nameplate%d+$") then
         HookUnitFrame(uf)
