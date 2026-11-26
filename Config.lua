@@ -186,10 +186,10 @@ FNC.CATEGORY_CONFIG = {
             if isUnitPlayer then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
             local taggedCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["TaggedMob"]
-            if taggedCat and taggedCat.enabled and FNC:IsTaggedByPlayerOrParty(unit) then
+            if taggedCat and taggedCat.enabled and FNC.IsTaggedByPlayerOrParty and FNC:IsTaggedByPlayerOrParty(unit) then
                 return false
             end
-            return FNC:IsActiveQuestUnit(unit, uf)
+            return (FNC.IsActiveQuestUnit ~= nil) and FNC:IsActiveQuestUnit(unit, uf)
         end,
     },
     {
@@ -224,11 +224,11 @@ FNC.CATEGORY_CONFIG = {
             if isUnitPlayer or isEnemy or not canAttack then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
             local taggedCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["TaggedMob"]
-            if taggedCat and taggedCat.enabled and FNC:IsTaggedByPlayerOrParty(unit) then
+            if taggedCat and taggedCat.enabled and FNC.IsTaggedByPlayerOrParty and FNC:IsTaggedByPlayerOrParty(unit) then
                 return false
             end
             local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
-            if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
+            if activeQuestCat and activeQuestCat.enabled and FNC.IsActiveQuestUnit and FNC:IsActiveQuestUnit(unit, uf) then
                 return false
             end
             return true
@@ -285,7 +285,7 @@ FNC.CATEGORY_CONFIG = {
         match = function(unit, isSubgroup, isRaidMember, isUnitPlayer, isEnemy, canAttack)
             if isUnitPlayer or not canAttack then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
-            return FNC:IsTaggedByPlayerOrParty(unit)
+            return (FNC.IsTaggedByPlayerOrParty ~= nil) and FNC:IsTaggedByPlayerOrParty(unit)
         end,
     },
     {
@@ -299,11 +299,11 @@ FNC.CATEGORY_CONFIG = {
             if isUnitPlayer or not (isEnemy or canAttack) then return false end
             if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then return false end
             local taggedCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["TaggedMob"]
-            if taggedCat and taggedCat.enabled and FNC:IsTaggedByPlayerOrParty(unit) then
+            if taggedCat and taggedCat.enabled and FNC.IsTaggedByPlayerOrParty and FNC:IsTaggedByPlayerOrParty(unit) then
                 return false
             end
             local activeQuestCat = ForeverNamePlateColorsDB and ForeverNamePlateColorsDB.categories and ForeverNamePlateColorsDB.categories["ActiveQuestUnit"]
-            if activeQuestCat and activeQuestCat.enabled and FNC:IsActiveQuestUnit(unit, uf) then
+            if activeQuestCat and activeQuestCat.enabled and FNC.IsActiveQuestUnit and FNC:IsActiveQuestUnit(unit, uf) then
                 return false
             end
             return true

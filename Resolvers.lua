@@ -27,28 +27,26 @@ local questCacheGeneration = 0
 -- Reusable scratch table for tooltip lines (zero per-call table allocation)
 local tooltipLines = {}
 
--- Short-lived per-pass caches to avoid repeated tooltip/threat/quest scans on bursty nameplate updates
-local tooltipCache = setmetatable({}, { __mode = "k" })
+-- Short-lived per-GUID caches for tooltip/tag/quest checks to prevent burst lag while avoiding stale state
+local tooltipCache = {}
 local taggedCache = {}
 local questUnitCache = {}
-local subtitleCache = {}
-local cacheGeneration = -1
-
-local function EnsurePassCacheFresh()
-    local curGen = (FNC.updatePassGeneration or 0) * 100000 + questCacheGeneration
-    if cacheGeneration ~= curGen then
-        cacheGeneration = curGen
-        wipe(tooltipCache)
-        wipe(taggedCache)
-        wipe(questUnitCache)
-        wipe(subtitleCache)
-    end
-end
+local lastTaggedCleanupTime = 0
+local lastQuestCacheGenSeen = -1
 
 local function IsSafeString(val)
     if type(val) ~= "string" or val == "" then return false end
     if issecretvalue and issecretvalue(val) then return false end
     return true
+end
+
+local function GetSafeGuid(unit)
+    if not IsSafeString(unit) or not UnitGUID then return "" end
+    local ok, guid = pcall(UnitGUID, unit)
+    if not ok or not IsSafeString(guid) then
+        return ""
+    end
+    return guid
 end
 
 local function CleanTooltipText(text)
@@ -83,15 +81,17 @@ local function ParseObjectiveProgressLine(text)
     return nil
 end
 
-local function GetNpcIDFromUnit(unit)
-    if not IsSafeString(unit) or not UnitGUID then return nil end
-    local ok, guid = pcall(UnitGUID, unit)
-    if not ok or not IsSafeString(guid) then return nil end
+local function GetNpcIDFromGuid(guid)
+    if not IsSafeString(guid) then return nil end
     local unitType, _, _, _, _, npcIDStr = strsplit("-", guid)
     if (unitType == "Creature" or unitType == "Vehicle") and npcIDStr then
         return tonumber(npcIDStr)
     end
     return nil
+end
+
+local function GetNpcIDFromUnit(unit)
+    return GetNpcIDFromGuid(GetSafeGuid(unit))
 end
 
 --------------------------------------------------------------------------------
@@ -174,7 +174,6 @@ local function AddQuestieObjectiveNpcs(obj, qdb)
         return
     end
 
-    -- 1. Direct SpawnList (monster, event, killcredit, and item objectives)
     if type(obj.SpawnList) == "table" then
         for npcId in pairs(obj.SpawnList) do
             local numId = tonumber(npcId)
@@ -184,7 +183,6 @@ local function AddQuestieObjectiveNpcs(obj, qdb)
         end
     end
 
-    -- 2. Direct monster kill objective
     if obj.Type == "monster" then
         local numId = tonumber(obj.Id)
         if numId and numId > 0 then
@@ -192,7 +190,6 @@ local function AddQuestieObjectiveNpcs(obj, qdb)
         end
     end
 
-    -- 3. Item drop / collect objective -> all NPCs that drop this item in QuestieDB
     if obj.Type == "item" then
         local itemId = tonumber(obj.Id)
         if itemId and itemId > 0 and qdb then
@@ -269,7 +266,6 @@ local function RebuildQuestieCache()
 
     local qp, qdb, qt = GetQuestieModules()
     local ok, err = pcall(function()
-        -- 1. Check QuestiePlayer.currentQuestlog if populated
         if qp and type(qp.currentQuestlog) == "table" then
             for rawQuestId, quest in pairs(qp.currentQuestlog) do
                 local questId = tonumber(rawQuestId)
@@ -295,7 +291,6 @@ local function RebuildQuestieCache()
             end
         end
 
-        -- 2. Check legacy or C_QuestLog quest log entries if available
         if GetNumQuestLogEntries and GetQuestLogTitle then
             local numEntries = GetNumQuestLogEntries() or 0
             for i = 1, numEntries do
@@ -323,7 +318,6 @@ local function RebuildQuestieCache()
             end
         end
 
-        -- 3. Harvest turn-in NPCs and active quest objective mobs from QuestieTooltips.lookupByKey ("m_<npcId>")
         if qt and type(qt.lookupByKey) == "table" then
             local questCompleteMemo = {}
             for qid, isReady in pairs(readyQuestIDs) do
@@ -409,7 +403,8 @@ end
 
 local function AddTurnInNPC(rawTarget, isQuestComplete)
     if not IsSafeString(rawTarget) then return end
-    local npc = rawTarget:match("^([^%.%!%?,\r\n]+)") or rawTarget
+    local npc = rawTarget:match("^([^%.%!%?,
+]+)") or rawTarget
     npc = npc:lower()
     local afterTo = npc:match("^.+%s+to%s+(.+)$")
     if afterTo and afterTo ~= "" then
@@ -442,20 +437,30 @@ local function ScanTextForTurnInNPCs(text, isQuestComplete)
     if lower == "" then return end
 
     local patterns = {
-        "speak with%s+([^%.%!%?,\r\n]+)",
-        "speak to%s+([^%.%!%?,\r\n]+)",
-        "talk to%s+([^%.%!%?,\r\n]+)",
-        "talk with%s+([^%.%!%?,\r\n]+)",
-        "return to%s+([^%.%!%?,\r\n]+)",
-        "report to%s+([^%.%!%?,\r\n]+)",
+        "speak with%s+([^%.%!%?,
+]+)",
+        "speak to%s+([^%.%!%?,
+]+)",
+        "talk to%s+([^%.%!%?,
+]+)",
+        "talk with%s+([^%.%!%?,
+]+)",
+        "return to%s+([^%.%!%?,
+]+)",
+        "report to%s+([^%.%!%?,
+]+)",
         "see%s+([%a'%-%s]+)%s+in%s+",
         "see%s+([%a'%-%s]+)%s+at%s+",
         "find%s+([%a'%-%s]+)%s+in%s+",
         "find%s+([%a'%-%s]+)%s+at%s+",
-        "deliver%s+.-%s+to%s+([^%.%!%?,\r\n]+)",
-        "bring%s+.-%s+to%s+([^%.%!%?,\r\n]+)",
-        "take%s+.-%s+to%s+([^%.%!%?,\r\n]+)",
-        "give%s+.-%s+to%s+([^%.%!%?,\r\n]+)",
+        "deliver%s+.-%s+to%s+([^%.%!%?,
+]+)",
+        "bring%s+.-%s+to%s+([^%.%!%?,
+]+)",
+        "take%s+.-%s+to%s+([^%.%!%?,
+]+)",
+        "give%s+.-%s+to%s+([^%.%!%?,
+]+)",
     }
 
     for _, pat in ipairs(patterns) do
@@ -472,6 +477,8 @@ function FNC:RebuildQuestCache()
     if rebuildingQuestCache then return end
     rebuildingQuestCache = true
     questCacheGeneration = questCacheGeneration + 1
+    wipe(questUnitCache)
+
     local usingQuestie = RebuildQuestieCache()
     hasUnrecognizedQuest = false
 
@@ -492,8 +499,6 @@ function FNC:RebuildQuestCache()
 
     local numEntries = GetNumQuestLogEntries() or 0
 
-    -- When Questie is active, verify if all player quests exist in Questie's quest log.
-    -- If every quest is tracked by Questie, we don't even need heavy quest log text selection.
     if usingQuestie then
         for i = 1, numEntries do
             local title, _, _, isHeader, _, _, _, questID = GetQuestLogTitle(i)
@@ -513,7 +518,6 @@ function FNC:RebuildQuestCache()
         end
     end
 
-    -- Fallback Blizzard Quest Log scanner (only runs when Questie is absent or for unrecognized custom quests)
     local corpusParts = {}
     local prevSelection = GetQuestLogSelection and GetQuestLogSelection() or 0
 
@@ -672,7 +676,6 @@ local function CheckTaggedByPlayerOrPartyInternal(unit)
     end
 
     if IsInRaid() then
-        local anyGroupInCombat = inCombat and (UnitAffectingCombat("player") or (UnitExists("pet") and UnitAffectingCombat("pet")))
         local numMembers = GetNumGroupMembers()
         for i = 1, numMembers do
             local rUnit = RAID_UNITS[i]
@@ -686,9 +689,6 @@ local function CheckTaggedByPlayerOrPartyInternal(unit)
                 if inCombat and UnitExists(rUnit .. "target") and UnitIsUnit(rUnit .. "target", unit) then
                     return true
                 end
-                if inCombat and UnitAffectingCombat(rUnit) then
-                    anyGroupInCombat = true
-                end
             end
             local rPet = RAID_PET_UNITS[i]
             if rPet and UnitExists(rPet) then
@@ -701,16 +701,9 @@ local function CheckTaggedByPlayerOrPartyInternal(unit)
                 if inCombat and UnitExists(rPet .. "target") and UnitIsUnit(rPet .. "target", unit) then
                     return true
                 end
-                if inCombat and UnitAffectingCombat(rPet) then
-                    anyGroupInCombat = true
-                end
             end
         end
-        if inCombat and anyGroupInCombat then
-            return true
-        end
     elseif IsInGroup() then
-        local anyPartyInCombat = inCombat and (UnitAffectingCombat("player") or (UnitExists("pet") and UnitAffectingCombat("pet")))
         for i = 1, 4 do
             local pUnit = PARTY_UNITS[i]
             if UnitExists(pUnit) then
@@ -722,9 +715,6 @@ local function CheckTaggedByPlayerOrPartyInternal(unit)
                 end
                 if inCombat and UnitExists(pUnit .. "target") and UnitIsUnit(pUnit .. "target", unit) then
                     return true
-                end
-                if inCombat and UnitAffectingCombat(pUnit) then
-                    anyPartyInCombat = true
                 end
             end
             local pPet = PARTY_PET_UNITS[i]
@@ -738,13 +728,7 @@ local function CheckTaggedByPlayerOrPartyInternal(unit)
                 if inCombat and UnitExists(pPet .. "target") and UnitIsUnit(pPet .. "target", unit) then
                     return true
                 end
-                if inCombat and UnitAffectingCombat(pPet) then
-                    anyPartyInCombat = true
-                end
             end
-        end
-        if inCombat and anyPartyInCombat then
-            return true
         end
     end
 
@@ -753,24 +737,35 @@ end
 
 function FNC:IsTaggedByPlayerOrParty(unit)
     if not IsSafeString(unit) then return false end
-    EnsurePassCacheFresh()
-    local guid = UnitGUID and UnitGUID(unit) or ""
-    local combatFlag = (UnitAffectingCombat and UnitAffectingCombat(unit)) and "1" or "0"
-    local tapFlag = (UnitIsTapDenied and UnitIsTapDenied(unit)) and "1" or "0"
-    local key = unit .. "|" .. tostring(guid) .. "|" .. combatFlag .. "|" .. tapFlag
-    local cached = taggedCache[key]
-    if cached ~= nil then
-        return cached
+    local guid = GetSafeGuid(unit)
+    if guid == "" then return false end
+
+    local now = GetTime and GetTime() or 0
+    if (now - lastTaggedCleanupTime) > 15.0 then
+        lastTaggedCleanupTime = now
+        wipe(taggedCache)
     end
+
+    local combatFlag = (UnitAffectingCombat and UnitAffectingCombat(unit)) and 1 or 0
+    local tapFlag = (UnitIsTapDenied and UnitIsTapDenied(unit)) and 2 or 0
+    local state = combatFlag + tapFlag
+
+    local entry = taggedCache[guid]
+    if entry and entry.state == state and (now - entry.t) < 0.20 then
+        return entry.res
+    end
+
     local ok, result = pcall(CheckTaggedByPlayerOrPartyInternal, unit)
     local res = ok and result == true
-    taggedCache[key] = res
+    taggedCache[guid] = { res = res, state = state, t = now }
     return res
 end
 
 -- Hidden Tooltip Scraper for NPC Role/Job Subtitles, Minion Owner Tags, and Fallback Quest Objectives
 local scanTooltip = CreateFrame("GameTooltip", "FNCScanTooltip", nil, "GameTooltipTemplate")
 scanTooltip:SetOwner(WorldFrame, "ANCHOR_NONE")
+
+local tooltipCacheCount = 0
 
 local function GetUnitTooltipLines(unit)
     wipe(tooltipLines)
@@ -780,11 +775,10 @@ local function GetUnitTooltipLines(unit)
         return tooltipLines, 0
     end
 
-    EnsurePassCacheFresh()
-    local guid = UnitGUID and UnitGUID(unit) or ""
-    local cacheKey = unit .. "|" .. tostring(guid)
-    local cachedEntry = tooltipCache[cacheKey]
-    if cachedEntry then
+    local now = GetTime and GetTime() or 0
+    local guid = GetSafeGuid(unit)
+    local cachedEntry = (guid ~= "") and tooltipCache[guid] or nil
+    if cachedEntry and (now - cachedEntry.t) < 0.50 then
         for i = 1, cachedEntry.count do
             tooltipLines[i] = cachedEntry[i]
         end
@@ -829,11 +823,18 @@ local function GetUnitTooltipLines(unit)
         end)
     end
 
-    local saved = { count = count }
-    for i = 1, count do
-        saved[i] = tooltipLines[i]
+    if guid ~= "" then
+        if tooltipCacheCount >= 600 then
+            wipe(tooltipCache)
+            tooltipCacheCount = 0
+        end
+        local saved = { count = count, t = now }
+        for i = 1, count do
+            saved[i] = tooltipLines[i]
+        end
+        tooltipCache[guid] = saved
+        tooltipCacheCount = tooltipCacheCount + 1
     end
-    tooltipCache[cacheKey] = saved
 
     return tooltipLines, count
 end
@@ -1038,7 +1039,6 @@ local function CheckActiveQuestUnitInternal(unit, uf)
 
     local canAttack = UnitCanAttack and UnitCanAttack("player", unit) or false
 
-    -- If another player/party has tagged this mob, revert to Blizzard default tapped color
     if canAttack and UnitIsTapDenied and UnitIsTapDenied(unit) then
         return false
     end
@@ -1057,7 +1057,7 @@ local function CheckActiveQuestUnitInternal(unit, uf)
 
     local npcID = GetNpcIDFromUnit(unit)
 
-    -- 1. Primary path: Authoritative QuestieDB + QuestiePlayer exact npcID lookup
+    -- 1. Primary path: Authoritative QuestieDB + QuestiePlayer exact npcID lookup (zero tooltip scan!)
     if questieCacheActive then
         if not canAttack then
             if npcID and questieTurnInNpcIDs[npcID] then
@@ -1069,14 +1069,12 @@ local function CheckActiveQuestUnitInternal(unit, uf)
             end
         end
 
-        -- If every quest in the player's quest log is recognized by Questie, do NOT fall back to
-        -- tooltip scraping (which prevents party member quest lines from ever bleeding through).
         if not hasUnrecognizedQuest then
             return false
         end
     end
 
-    -- 2. Fallback path: Standalone Blizzard Quest Log + Tooltip scanner (when Questie is absent or custom quest)
+    -- 2. Fallback path: Standalone Blizzard Quest Log + Tooltip scanner
     local unitName = UnitName(unit)
     local lowerName = IsSafeString(unitName) and unitName:lower() or nil
     local lines, count = GetUnitTooltipLines(unit)
@@ -1122,16 +1120,23 @@ end
 
 function FNC:IsActiveQuestUnit(unit, uf)
     if not IsSafeString(unit) then return false end
-    EnsurePassCacheFresh()
-    local guid = UnitGUID and UnitGUID(unit) or ""
-    local key = unit .. "|" .. tostring(guid)
-    local cached = questUnitCache[key]
-    if cached ~= nil then
-        return cached
+    local guid = GetSafeGuid(unit)
+    if guid == "" then return false end
+
+    if lastQuestCacheGenSeen ~= questCacheGeneration then
+        lastQuestCacheGenSeen = questCacheGeneration
+        wipe(questUnitCache)
     end
+
+    local now = GetTime and GetTime() or 0
+    local cached = questUnitCache[guid]
+    if cached and (now - cached.t) < 0.50 then
+        return cached.res
+    end
+
     local ok, result = pcall(CheckActiveQuestUnitInternal, unit, uf)
     local res = ok and result == true
-    questUnitCache[key] = res
+    questUnitCache[guid] = { res = res, t = now }
     return res
 end
 
@@ -1168,16 +1173,8 @@ end
 
 function FNC:GetNPCSubtitle(unit)
     if not IsSafeString(unit) then return nil end
-    EnsurePassCacheFresh()
-    local guid = UnitGUID and UnitGUID(unit) or ""
-    local key = unit .. "|" .. tostring(guid)
-    if subtitleCache[key] ~= nil then
-        return subtitleCache[key] or nil
-    end
     local ok, result = pcall(GetNPCSubtitleInternal, unit)
-    local res = ok and result or false
-    subtitleCache[key] = res
-    return res or nil
+    return ok and result or nil
 end
 
 -- Subgroup Check using UnitInRaid index lookup
@@ -1280,37 +1277,6 @@ function FNC.ResolveFriendlyMinionSubKey(unit)
     end
 
     return nil
-end
-
--- Fast cached check for neutral ("yellow") attackable mobs (reaction == 4)
-local yellowMobCache = {}
-local yellowMobCacheGen = -1
-
-function FNC:IsNeutralYellowMob(unit)
-    if not IsSafeString(unit) or UnitIsPlayer(unit) then return false end
-    if UnitPlayerControlled(unit) or (UnitIsOtherPlayersPet and UnitIsOtherPlayersPet(unit)) then
-        return false
-    end
-    local curGen = (FNC.updatePassGeneration or 0) * 100000 + questCacheGeneration
-    if yellowMobCacheGen ~= curGen then
-        yellowMobCacheGen = curGen
-        wipe(yellowMobCache)
-    end
-    local guid = UnitGUID and UnitGUID(unit) or ""
-    local key = unit .. "|" .. tostring(guid)
-    local cached = yellowMobCache[key]
-    if cached ~= nil then
-        return cached
-    end
-    local isYellow = false
-    if UnitCanAttack and UnitCanAttack("player", unit) and UnitReaction then
-        local ok, reaction = pcall(UnitReaction, "player", unit)
-        if ok and reaction == 4 then
-            isYellow = true
-        end
-    end
-    yellowMobCache[key] = isYellow
-    return isYellow
 end
 
 function FNC:DumpQuestDebug(unit)
