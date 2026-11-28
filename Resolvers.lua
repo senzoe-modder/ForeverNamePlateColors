@@ -403,8 +403,7 @@ end
 
 local function AddTurnInNPC(rawTarget, isQuestComplete)
     if not IsSafeString(rawTarget) then return end
-    local npc = rawTarget:match("^([^%.%!%?,
-]+)") or rawTarget
+    local npc = rawTarget:match("^([^%.%!%?,\\n]+)") or rawTarget
     npc = npc:lower()
     local afterTo = npc:match("^.+%s+to%s+(.+)$")
     if afterTo and afterTo ~= "" then
@@ -437,30 +436,20 @@ local function ScanTextForTurnInNPCs(text, isQuestComplete)
     if lower == "" then return end
 
     local patterns = {
-        "speak with%s+([^%.%!%?,
-]+)",
-        "speak to%s+([^%.%!%?,
-]+)",
-        "talk to%s+([^%.%!%?,
-]+)",
-        "talk with%s+([^%.%!%?,
-]+)",
-        "return to%s+([^%.%!%?,
-]+)",
-        "report to%s+([^%.%!%?,
-]+)",
+        "speak with%s+([^%.%!%?,\\n]+)",
+        "speak to%s+([^%.%!%?,\\n]+)",
+        "talk to%s+([^%.%!%?,\\n]+)",
+        "talk with%s+([^%.%!%?,\\n]+)",
+        "return to%s+([^%.%!%?,\\n]+)",
+        "report to%s+([^%.%!%?,\\n]+)",
         "see%s+([%a'%-%s]+)%s+in%s+",
         "see%s+([%a'%-%s]+)%s+at%s+",
         "find%s+([%a'%-%s]+)%s+in%s+",
         "find%s+([%a'%-%s]+)%s+at%s+",
-        "deliver%s+.-%s+to%s+([^%.%!%?,
-]+)",
-        "bring%s+.-%s+to%s+([^%.%!%?,
-]+)",
-        "take%s+.-%s+to%s+([^%.%!%?,
-]+)",
-        "give%s+.-%s+to%s+([^%.%!%?,
-]+)",
+        "deliver%s+.-%s+to%s+([^%.%!%?,\\n]+)",
+        "bring%s+.-%s+to%s+([^%.%!%?,\\n]+)",
+        "take%s+.-%s+to%s+([^%.%!%?,\\n]+)",
+        "give%s+.-%s+to%s+([^%.%!%?,\\n]+)",
     }
 
     for _, pat in ipairs(patterns) do
