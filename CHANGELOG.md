@@ -2,6 +2,11 @@
 
 ***
 
+# v1.4.13
+* Fixed bug with party members not displaying assigned colors
+
+***
+
 # v1.4.12
 * Fixed background errors while in dungeon
 * Small perfromance improvements
